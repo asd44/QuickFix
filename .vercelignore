@@ -1,0 +1,2 @@
+# Ignore API routes during Vercel build (using client-side payments for PWA)
+src/app/api/**

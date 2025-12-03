@@ -1,0 +1,67 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Users collection
+    match /users/{userId} {
+      // Anyone authenticated can read user profiles
+      allow read: if request.auth != null;
+      
+      // Users can write their own data (FCM tokens, status, profile)
+      // OR if they are admin (checked after user is created)
+      allow write: if request.auth != null && (
+        request.auth.uid == userId
+      );
+      
+      // Separate admin write rule (applies if user is admin)
+      allow write: if request.auth != null && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    
+    // Bookings collection
+    match /bookings/{bookingId} {
+      // Read own bookings
+      allow read: if request.auth != null && (
+        resource.data.studentId == request.auth.uid ||
+        resource.data.tutorId == request.auth.uid
+      );
+      
+      // Create bookings (customers only)
+      allow create: if request.auth != null && 
+        request.resource.data.studentId == request.auth.uid;
+      
+      // Update own bookings
+      allow update: if request.auth != null && (
+        resource.data.studentId == request.auth.uid ||
+        resource.data.tutorId == request.auth.uid
+      );
+    }
+    
+    // Chats collection
+    match /chats/{chatId} {
+      allow read, write: if request.auth != null;
+    }
+    
+    // Messages subcollection
+    match /chats/{chatId}/messages/{messageId} {
+      allow read, create: if request.auth != null;
+    }
+    
+    // Ratings collection
+    match /ratings/{ratingId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null;
+    }
+    
+    // Subscriptions collection
+    match /subscriptions/{subscriptionId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+    
+    // Interested students/customers
+    match /interestedStudents/{docId} {
+      allow read, create: if request.auth != null;
+    }
+  }
+}

@@ -1,0 +1,67 @@
+{
+    "indexes": [
+        {
+            "collectionGroup": "users",
+            "queryScope": "COLLECTION",
+            "fields": [
+                {
+                    "fieldPath": "role",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "tutorProfile.verified",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "tutorProfile.subscription.status",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "tutorProfile.averageRating",
+                    "order": "DESCENDING"
+                }
+            ]
+        },
+        {
+            "collectionGroup": "users",
+            "queryScope": "COLLECTION",
+            "fields": [
+                {
+                    "fieldPath": "role",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "tutorProfile.verified",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "tutorProfile.subscription.status",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "tutorProfile.subjects",
+                    "arrayConfig": "CONTAINS"
+                },
+                {
+                    "fieldPath": "tutorProfile.averageRating",
+                    "order": "DESCENDING"
+                }
+            ]
+        },
+        {
+            "collectionGroup": "users",
+            "queryScope": "COLLECTION",
+            "fields": [
+                {
+                    "fieldPath": "role",
+                    "order": "ASCENDING"
+                },
+                {
+                    "fieldPath": "createdAt",
+                    "order": "DESCENDING"
+                }
+            ]
+        }
+    ],
+    "fieldOverrides": []
+}

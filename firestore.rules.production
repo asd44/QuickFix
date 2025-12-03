@@ -1,0 +1,91 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{userId} {
+      allow create: if request.auth != null && request.auth.uid == userId;
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == userId;
+      // Allow reading FCM tokens for admins and message senders
+      allow read: if request.auth != null && (
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+      );
+    }
+
+    // Bookings collection (service appointments)
+    match /bookings/{bookingId} {
+      // Users can read their own bookings
+      allow read: if request.auth != null && (
+        resource.data.studentId == request.auth.uid ||
+        resource.data.tutorId == request.auth.uid
+      );
+      // Admins can read all bookings
+      allow read: if request.auth != null &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+
+      // Only customers can create bookings
+      allow create: if request.auth != null &&
+        request.resource.data.studentId == request.auth.uid;
+
+      // Customer or provider can update their bookings
+      allow update: if request.auth != null && (
+        resource.data.studentId == request.auth.uid ||
+        resource.data.tutorId == request.auth.uid
+      );
+      // Admins can update any booking
+      allow update: if request.auth != null &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // Chats collection
+    match /chats/{chatId} {
+      // Users in the chat can read/write
+      allow read, write: if request.auth != null &&
+        request.auth.uid in resource.data.participants;
+      // Allow creating new chats
+      allow create: if request.auth != null;
+    }
+
+    // Messages subcollection
+    match /chats/{chatId}/messages/{messageId} {
+      // Participants can read messages
+      allow read: if request.auth != null &&
+        request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
+      // Participants can create messages
+      allow create: if request.auth != null &&
+        request.auth.uid in get(/databases/$(database)/documents/chats/$(chatId)).data.participants;
+    }
+
+    // Ratings collection
+    match /ratings/{ratingId} {
+      // Anyone authenticated can read ratings
+      allow read: if request.auth != null;
+      // Only customers can create ratings
+      allow create: if request.auth != null &&
+        request.resource.data.studentId == request.auth.uid;
+    }
+
+    // Subscriptions collection (provider subscriptions)
+    match /subscriptions/{subscriptionId} {
+      // Anyone authenticated can read subscriptions
+      allow read: if request.auth != null;
+      // Only admins can write subscriptions
+      allow write: if request.auth != null &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // Interested students/customers (leads for providers)
+    match /interestedStudents/{docId} {
+      allow read: if request.auth != null;
+      allow create: if request.auth != null;
+    }
+
+    // Wildcard match for any other document
+    match /{document=**} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+  }
+}

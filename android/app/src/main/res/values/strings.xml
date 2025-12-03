@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">QuickFix</string>
+    <string name="title_activity_main">QuickFix</string>
+    <string name="package_name">com.quickfix.app</string>
+    <string name="custom_url_scheme">com.quickfix.app</string>
+</resources>

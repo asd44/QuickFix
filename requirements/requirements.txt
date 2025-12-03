@@ -1,0 +1,206 @@
+Table of Contents
+1. Overview and Platform ...................................................................................................................... 2
+2. User Roles and Accounts .................................................................................................................... 2
+Student Account Features .................................................................................................................. 2
+Tutor Account Features...................................................................................................................... 2
+Tutor Public Profile Details ............................................................................................................... 3
+3. Subscriptions and Pricing .................................................................................................................. 4
+Pricing .................................................................................................................................................. 4
+Payment Methods ................................................................................................................................ 4
+4. Search and Discovery ......................................................................................................................... 5
+5. Interaction and Communication........................................................................................................ 5
+In-App Chat ......................................................................................................................................... 5
+Tutor Proactive Chat .......................................................................................................................... 5
+6. Lesson Management and Rating ....................................................................................................... 6
+Lesson Completion & Rating ............................................................................................................. 6
+Complaints System .............................................................................................................................. 6
+7. Admin Panel (Web) ............................................................................................................................. 6
+8. Security and Accessibility ................................................................................................................... 7
+9. News Section (Short Updates) Specification ..................................................................................... 7
+Overview and UI .................................................................................................................................... 7
+News Feed Display ................................................................................................................................ 7
+User Actions .......................................................................................................................................... 8
+Notifications (Breaking News)............................................................................................................... 8
+Admin Panel Feature ............................................................................................................................. 8
+TutorLink Tutoring App: Consolidated Feature
+Specification
+TutorLink is a tutoring platform connecting students and tutors directly. Tutors subscribe
+monthly to appear in search results and contact students. Students can browse tutors, chat, and
+rate lessons. Payments and lesson coordination happen outside the app
+1. Overview and Platform
+TutorLink is a direct-to-tutor platform where tutors pay for a subscription to showcase their
+services and connect with students, and students browse, chat, and rate lessons.
+ Platform: Flutter (Android + iOS).
+ Interface: Clean, responsive, and user-friendly UI.
+ Bilingual: Supports Arabic & English (fully RTL-compatible) with an in-app language
+switch option.
+ Monetization: Subscription for tutors (1 month, 3 months, and 12 months).
+ Lesson Coordination: The app does not manage payments or lessons; coordination
+happens directly between the student and tutor outside the app.
+2. User Roles and Accounts
+The app supports three main user roles: Student, Tutor, and Admin.
+Student Account Features
+ Registration/Login: Sign up using a Google account or via phone number/email and
+basic details. Students accept terms and privacy policy upon registration.
+ Profile: Simple profile including Full Name, Grade, Area, email, and phone number.
+ Interaction: View tutor profiles, search for tutors using filters, and chat directly with
+tutors through the in-app messaging system.
+ Management: Save tutors to a favorites list.
+ Safety: Can block/report users directly, with optional reasons, and file complaints
+directly to admin through a complaint form with optional attachments.
+Tutor Account Features
+ Registration/Login: Sign up using a Google account or via phone number/email.
+Tutors accept terms and privacy policy upon registration.
+ Verification: Must upload a valid ID (National ID, Passport, or Driver’s License) for
+verification. Account requires admin approval before becoming active. Admins can
+approve, reject, or request additional proof. Verified tutors display a badge on their
+profile.
+ Subscription: Must pay for subscription to appear in search results and interact with
+students.
+ Dashboard: Tutors have a dashboard showing Profile views count, Subscription status,
+Admin notifications, and Session History.
+ Safety: Can block a student from chatting with them and submit complaints against
+students/inappropriate student behavior.
+Tutor Public Profile Details
+Tutors create a detailed profile. Changes await admin review before publication.
+Visibility Field Description
+Full Name + Gender Public Displayed to students.
+Profile Picture Public Displayed to students.
+Introductory Video Optional/Public Must be MP4 format, up to 50 MB, and 1 minute long
+(Premium feature).
+Bio / About Me Optional/Public Optional self-introduction text/section.
+Subjects & Grades Public Subjects and grade levels taught.
+Teaching Type Public In-person or Online.
+Area (City / Region) Public Location/Area of teaching.
+Hourly Rate Public "Starting from..." rate to account for grade
+differences.
+Field Visibility Description
+Years of Experience Public Years of experience.
+Average Rating Public Average rating from stars only (1-5 stars).
+ID, Phone, Email,
+Address Admin Only Encrypted data for admin and verification purposes.
+3. Subscriptions and Pricing
+Pricing
+Tutors are required to have a subscription to be visible and interactive. Prices are determined
+by the admin.
+Plan Duration Suggested Price
+Monthly 1 month $10
+Quarterly 3 months $27 (10% off)
+Yearly 12 months $96 (20% off)
+Payment Methods
+The admin can enable or disable these methods.
+ Credit Card Payments
+ Auto-renew by default
+ Email + in-app reminders before renewal (7, 3, 1 days)
+ Auto-cancel if payment fails 3 times
+ Invoice stored in tutor account
+ Wish Money Payments
+A. Wish Money API: Payments can be made via integrated gateway Whish Money
+B. Manual 'Wish Money' Agent : Payments can be made manually via Wish
+Money agents but the Tutor must specify full name and phone number to be
+mentioned in the note area at the agent then:
+1. Admin dashboard shows “Pending Wish Payment” queue
+2. Admin approves/rejects
+3. Subscription activates immediately when approved
+ Refunds: Refunds and disputes are handled through admin within 3 days of request.
+4. Search and Discovery
+Students can find tutors using a search bar and a detailed set of filters.
+ Search Filters: Subject, Grade level, Area/location, Teaching type (In-person/Online),
+Gender, Price/Hourly rate (Min – Max).
+ Ranking: Considers relevance, rating, and proximity. A rotation system ensures
+fairness and visibility for all tutors.
+5. Interaction and Communication
+In-App Chat
+ Basic Tutor: Can only respond to messages initiated by a student.
+ Monitoring: All messages are monitored for spam or abuse using automated filters.
+Tutor Proactive Chat
+Tutors have access to a section called “Interested Students”.
+ Students Displayed: This section displays students who interacted with the tutor's profile
+in one of the following ways: visited the tutor’s profile, searched for a subject/grade
+that the tutor teaches, or marked the tutor as "interested".
+ Student Info Tutors See: Student first name, grade level, and city or area.
+ Privacy Rules: Tutors cannot see student phone numbers.
+6. Lesson Management and Rating
+Lesson Completion & Rating
+ Connection Started: A connection is considered started when a student sends the first
+in-app message to the tutor.
+ Completion: Tutor can mark a lesson as ‘Completed’ once finished. The ‘Mark Lesson
+as Completed’ button appears on the tutor’s side of the chat screen. Tutors should be
+informed that marking lessons helps improve lesson analytics, boosts their visibility in
+search results, and supports a more accurate rating process.
+ Tutor Summary: The tutor can add a short lesson summary or write a brief
+description/title of the lesson taken after completion.
+ Rating Prompt: Once marked completed, student is prompted to rate the tutor (it is
+required).
+ Rating System: Students rate tutors from 1 to 5 stars. Ratings are linked to verified
+lessons only. Ratings are star-based only (no public comments). Ratings include no
+public written comments visible to students; text feedback is admin-only.
+ History: The lesson summary and rating are saved to the session history, viewable by the
+tutor.
+Complaints System
+ Internal System: Students and tutors can file complaints against the other party using a
+simple internal form (type + description). Students can include optional attachments.
+ Review: Admins review complaints within 3 days and can warn, suspend, or remove
+tutors based on evidence.
+7. Admin Panel (Web)
+The Admin Panel is a web-based system for managing the application.
+ Dashboard includes: Tutor verification queue, Payment confirmation queue, Complaint
+management queue, and Analytics/user statistics (active tutors, payments, churn, and
+engagement).
+ User Management: Admins can edit or remove any user profile, manage student and
+tutor accounts (deactivate, renew, upgrade), and block accounts.
+ Verification & Approval: Manage the Tutor verification queue and manually approve
+accounts. The admin has an option to make account approval automatic.
+ Payment & Subscription: Enable/disable Payment methods, manage the Payment
+confirmation queue, track subscriptions, and set the pricing.
+ Complaint Management: Review and resolve the Complaint management queue.
+ Analytics & Reporting: System tracks: active users, conversion rates, average session
+ratings, churn rate, and complaint categories. Reports are generated weekly for admin
+insight and continuous improvement. Ability to export/download advanced statistics for
+the whole app, revenue reports, monthly user growth, active tutors, student accounts, top
+tutors, and show users of a specific area.
+ Communication: Send notifications (messages, subscription alerts) to all subscriptions
+or to specific ones.
+ Accountability: All actions are logged for accountability.
+ Manage the short news updates:
+o Add, Edit, and Delete short news items.
+o Field Inputs:
+ Text: Maximum 250 characters.
+ Breaking News Toggle: Option to mark the item as 'Breaking News' for
+immediate push notification.
+ Timestamp: Auto-generated upon creation.
+8. Security and Accessibility
+ Data Security: All communication uses HTTPS/TLS encryption. Sensitive data
+(phone, ID, email) is encrypted at rest. All personal data is securely stored.
+ Abuse Prevention: All messages are monitored for spam or abuse using automated
+filters. Rate limiting is enforced on login and messaging to prevent spam.
+ Accessibility & Localization: Supports both English and Arabic with proper text
+alignment and layout mirroring.
+ Logs and Backups: Activity logs are maintained for disputes. Daily backups and uptime
+target: 99%. Full privacy and retention policy applies to all stored data.
+9. News Section (Short Updates) Specification
+Overview and UI
+ A dedicated News tab will be added to the mobile application.
+ The UI is a simple list view for quick reading.
+ No images, no long text, and no article pages.
+ A small badge should appear on the News tab when new items are available.
+News Feed Display
+The news feed will display short, education-related updates in reverse chronological order.
+ Each item must contain:
+o Short text (max 250 characters).
+o Timestamp.
+o Optional: Small icon or tag (e.g., “Education”, “Update”, “Alert”).
+User Actions
+ Copy: Copies the news text to the clipboard.
+ Share: Opens the native share sheet to share the news text via third-party applications.
+Notifications (Breaking News)
+ The Admin Panel must have an option to mark any news item as Breaking News.
+ When marked as breaking, an immediate push notification must be sent to all users.
+ Tapping the push notification will open the News tab directly.
+Admin Panel Feature
+Admins must have the ability to manage the short news updates:
+ Add, Edit, and Delete short news items.
+ Field Inputs:
+o Text: Maximum 250 characters.
+o Breaking News Toggle: Option to mark the item as 'Breaking News'.
+o Timestamp: Auto-generated upon creation.

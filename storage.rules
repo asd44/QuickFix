@@ -1,0 +1,40 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    
+    // Profile pictures
+    match /profile-pictures/{userId}/{fileName} {
+      // Anyone can read profile pictures (public)
+      allow read: if true;
+      // Only the user can upload their own profile picture
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Verification documents (service provider credentials)
+    match /verification-docs/{userId}/{fileName} {
+      // Authenticated users can read (for admin verification)
+      allow read: if request.auth != null;
+      // Only the user can upload their documents
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Chat attachments
+    match /chats/{chatId}/{fileName} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null;
+    }
+    
+    // Intro videos (service provider introduction videos)
+    match /intro-videos/{userId}/{fileName} {
+      // Anyone can read intro videos (public)
+      allow read: if true;
+      // Only the user can upload their intro video
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+    
+    // Allow admin to read everything
+    match /{allPaths=**} {
+      allow read: if request.auth != null;
+    }
+  }
+}

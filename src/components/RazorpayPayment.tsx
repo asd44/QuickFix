@@ -12,7 +12,7 @@ declare global {
 interface RazorpayPaymentProps {
     amount: number;
     bookingId: string;
-    isFinalPayment?: boolean;  // True for final payment after job completion
+    isFinalPayment?: boolean;
     onSuccess: () => void;
     onFailure: (error: string) => void;
 }
@@ -26,106 +26,61 @@ export function RazorpayPayment({
 }: RazorpayPaymentProps) {
     const [loading, setLoading] = useState(false);
 
-    const loadRazorpayScript = (): Promise<boolean> => {
-        return new Promise((resolve) => {
-            if (window.Razorpay) {
-                resolve(true);
-                return;
-            }
-
-            const script = document.createElement('script');
-            script.src = 'https://checkout.razorpay.com/v1/checkout.js';
-            script.onload = () => resolve(true);
-            script.onerror = () => resolve(false);
-            document.body.appendChild(script);
-        });
-    };
-
     const handlePayment = async () => {
         setLoading(true);
 
         try {
-            // Load Razorpay script
-            const res = await loadRazorpayScript();
-            if (!res) {
-                onFailure('Failed to load payment gateway');
-                setLoading(false);
-                return;
+            // Load Razorpay script dynamically
+            if (!window.Razorpay) {
+                const script = document.createElement('script');
+                script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+                document.body.appendChild(script);
+
+                await new Promise<void>((resolve, reject) => {
+                    script.onload = () => resolve();
+                    script.onerror = () => reject(new Error('Failed to load Razorpay'));
+                });
             }
 
-            // Create order
-            const orderResponse = await fetch('/api/razorpay/create-order', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    amount,
-                    bookingId,
-                    receipt: `booking_${bookingId}`,
-                }),
-            });
-
-            if (!orderResponse.ok) {
-                throw new Error('Failed to create order');
-            }
-
-            const order = await orderResponse.json();
-
-            // Razorpay checkout options
+            // Client-side Razorpay Checkout
             const options = {
-                key: order.key,
-                amount: order.amount,
-                currency: order.currency,
+                key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
+                amount: amount * 100, // Convert to paise
+                currency: 'INR',
                 name: 'QuickFix',
-                description: 'Service Job Payment',
-                order_id: order.orderId,
+                description: isFinalPayment ? 'Final Service Payment' : 'Booking Payment',
+                image: '/icon-192.png',
                 handler: async function (response: any) {
-                    // Verify payment
-                    const verifyResponse = await fetch('/api/razorpay/verify', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({
-                            razorpay_order_id: response.razorpay_order_id,
-                            razorpay_payment_id: response.razorpay_payment_id,
-                            razorpay_signature: response.razorpay_signature,
-                        }),
-                    });
+                    try {
+                        // Update booking in Firestore
+                        const { doc, updateDoc, Timestamp } = await import('firebase/firestore');
+                        const { db } = await import('@/lib/firebase/config');
 
-                    const verifyData = await verifyResponse.json();
+                        const bookingRef = doc(db, 'bookings', bookingId);
 
-                    if (verifyData.verified) {
-                        // Update booking status in Firestore (client-side)
-                        try {
-                            const { doc, updateDoc, serverTimestamp } = await import('firebase/firestore');
-                            const { db } = await import('@/lib/firebase/config');
-
-                            if (isFinalPayment) {
-                                // Update final payment fields
-                                await updateDoc(doc(db, 'bookings', bookingId), {
-                                    finalPaymentId: response.razorpay_payment_id,
-                                    finalPaymentStatus: 'completed',
-                                    paidAt: serverTimestamp(),
-                                    updatedAt: serverTimestamp(),
-                                });
-                            } else {
-                                // Update initial booking payment fields
-                                await updateDoc(doc(db, 'bookings', bookingId), {
-                                    paymentStatus: 'paid',
-                                    status: 'confirmed',
-                                    paymentIntentId: response.razorpay_payment_id,
-                                    updatedAt: serverTimestamp(),
-                                });
-                            }
-
-                            console.log('Booking updated successfully');
-                        } catch (updateError) {
-                            console.error('Failed to update booking:', updateError);
+                        if (isFinalPayment) {
+                            await updateDoc(bookingRef, {
+                                finalPaymentId: response.razorpay_payment_id,
+                                finalPaymentStatus: 'completed',
+                                paidAt: Timestamp.now(),
+                                updatedAt: Timestamp.now(),
+                            });
+                        } else {
+                            await updateDoc(bookingRef, {
+                                paymentStatus: 'paid',
+                                status: 'confirmed',
+                                paymentIntentId: response.razorpay_payment_id,
+                                updatedAt: Timestamp.now(),
+                            });
                         }
 
+                        setLoading(false);
                         onSuccess();
-                    } else {
-                        onFailure('Payment verification failed');
+                    } catch (error) {
+                        console.error('Error updating booking:', error);
+                        setLoading(false);
+                        onFailure('Payment successful but failed to update booking');
                     }
-                    setLoading(false);
                 },
                 prefill: {
                     name: '',
@@ -136,7 +91,7 @@ export function RazorpayPayment({
                     bookingId,
                 },
                 theme: {
-                    color: '#3B82F6',
+                    color: '#FF5722',
                 },
                 modal: {
                     ondismiss: function () {
@@ -147,11 +102,16 @@ export function RazorpayPayment({
             };
 
             const paymentObject = new window.Razorpay(options);
+            paymentObject.on('payment.failed', function (response: any) {
+                setLoading(false);
+                onFailure(response.error.description || 'Payment failed');
+            });
+
             paymentObject.open();
         } catch (error: any) {
             console.error('Payment error:', error);
-            onFailure(error.message || 'Payment failed');
             setLoading(false);
+            onFailure(error.message || 'Payment failed');
         }
     };
 

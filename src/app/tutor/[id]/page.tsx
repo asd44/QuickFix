@@ -17,6 +17,8 @@ import { RatingService } from '@/lib/services/rating.service';
 import { BookingService } from '@/lib/services/booking.service';
 import { Timestamp } from 'firebase/firestore';
 
+export const dynamicParams = true;
+
 export default function TutorProfilePage() {
     const params = useParams();
     const tutorId = params.id as string;

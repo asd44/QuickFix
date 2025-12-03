@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
     images: {
-        domains: ['firebasestorage.googleapis.com'],
+        unoptimized: true, // For Capacitor compatibility
     },
     typescript: {
         ignoreBuildErrors: true,

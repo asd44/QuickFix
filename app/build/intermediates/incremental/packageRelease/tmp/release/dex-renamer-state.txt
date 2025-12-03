@@ -1,4 +1,0 @@
-#Tue Dec 02 23:17:49 IST 2025
-base.0=/Users/pawansahu/Documents/Projects/MuteAds/QuickFix/app/build/intermediates/dex/release/minifyReleaseWithR8/classes.dex
-renamed.0=classes.dex
-path.0=classes.dex

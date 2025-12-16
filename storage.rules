@@ -2,16 +2,26 @@ rules_version = '2';
 service firebase.storage {
   match /b/{bucket}/o {
     
-    // Profile pictures
+    // Student/Provider Profile pictures (Legacy: profile-pictures, New: profiles)
     match /profile-pictures/{userId}/{fileName} {
-      // Anyone can read profile pictures (public)
       allow read: if true;
-      // Only the user can upload their own profile picture
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+    match /profiles/{userId}/{fileName} {
+      allow read: if true;
       allow write: if request.auth != null && request.auth.uid == userId;
     }
     
     // Verification documents (service provider credentials)
     match /verification-docs/{userId}/{fileName} {
+      // Authenticated users can read (for admin verification)
+      allow read: if request.auth != null;
+      // Only the user can upload their documents
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+    // KYC documents (new flow)
+    match /kyc/{userId}/{fileName} {
       // Authenticated users can read (for admin verification)
       allow read: if request.auth != null;
       // Only the user can upload their documents

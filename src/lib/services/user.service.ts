@@ -1,4 +1,4 @@
-import { collection, addDoc, getDocs, doc, getDoc, updateDoc, deleteDoc, query, where, orderBy, limit, Timestamp, increment } from 'firebase/firestore';
+import { collection, addDoc, getDocs, doc, getDoc, updateDoc, setDoc, deleteDoc, query, where, orderBy, limit, Timestamp, increment } from 'firebase/firestore';
 import { db } from '@/lib/firebase/config';
 import { User, StudentProfile, TutorProfile } from '@/lib/types/database';
 
@@ -12,18 +12,23 @@ export class UserService {
         return null;
     }
 
+    // Get user profile (alias for getUserById)
+    static async getUserProfile(uid: string): Promise<User | null> {
+        return this.getUserById(uid);
+    }
+
     // Update student profile
     static async updateStudentProfile(uid: string, profile: Partial<StudentProfile>): Promise<void> {
-        await updateDoc(doc(db, 'users', uid), {
+        await setDoc(doc(db, 'users', uid), {
             studentProfile: profile,
-        });
+        }, { merge: true });
     }
 
     // Update tutor profile
     static async updateTutorProfile(uid: string, profile: Partial<TutorProfile>): Promise<void> {
-        await updateDoc(doc(db, 'users', uid), {
+        await setDoc(doc(db, 'users', uid), {
             tutorProfile: profile,
-        });
+        }, { merge: true });
     }
 
     // Add tutor to favorites

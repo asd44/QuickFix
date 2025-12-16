@@ -1,245 +1,365 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter } from 'next/navigation';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/Card';
 import { Button } from '@/components/Button';
-import Link from 'next/link';
-import { UserRole } from '@/lib/types/database';
+import { CustomSelect } from '@/components/CustomSelect';
+import { UserRole, User } from '@/lib/types/database';
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { db } from '@/lib/firebase/config';
 
 export default function SignupPage() {
-    const { signUp, signInWithGoogle } = useAuth();
+    const { user, userData, loading: authLoading, signOut } = useAuth();
     const router = useRouter();
 
     const [role, setRole] = useState<UserRole>('student');
-    const [email, setEmail] = useState('');
-    const [password, setPassword] = useState('');
     const [firstName, setFirstName] = useState('');
     const [lastName, setLastName] = useState('');
-    const [grade, setGrade] = useState('');
-    const [city, setCity] = useState('');
     const [gender, setGender] = useState('');
-    const [area, setArea] = useState('');
+    const [city, setCity] = useState('');
+    const [coordinates, setCoordinates] = useState<{ latitude: number; longitude: number } | null>(null);
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
+    const [detectingLocation, setDetectingLocation] = useState(false);
 
-    const handleSignup = async (e: React.FormEvent) => {
+    const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+
+    useEffect(() => {
+        const params = new URLSearchParams(window.location.search);
+        const initialRole = params.get('role');
+        if (initialRole === 'tutor' || initialRole === 'student') {
+            setRole(initialRole);
+        } else {
+            // Fallback if no role is picked
+            setRole('student');
+        }
+    }, []);
+
+    const SERVICE_CATEGORIES = [
+        'Plumbing',
+        'Electrical',
+        'Carpentry',
+        'Painting',
+        'IT Services',
+        'AC Services',
+        'Event Planner',
+        'Interior Designing',
+        'Kitchen Appliances',
+        'Repairing'
+    ];
+
+    const toggleCategory = (category: string) => {
+        if (selectedCategories.includes(category)) {
+            setSelectedCategories(prev => prev.filter(c => c !== category));
+        } else {
+            if (selectedCategories.length >= 3) {
+                alert('You can select up to 3 service categories');
+                return;
+            }
+            setSelectedCategories(prev => [...prev, category]);
+        }
+    };
+
+    // Auto-detect location on mount
+    useEffect(() => {
+        detectLocation();
+    }, []);
+
+    const detectLocation = () => {
+        if (!navigator.geolocation) {
+            setError('Geolocation is not supported by your browser');
+            return;
+        }
+
+        setDetectingLocation(true);
+        setError('');
+
+        navigator.geolocation.getCurrentPosition(async (position) => {
+            const { latitude, longitude } = position.coords;
+            setCoordinates({ latitude, longitude });
+
+            try {
+                // Reverse geocoding using OpenStreetMap Nominatim
+                const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`);
+                const data = await response.json();
+
+                if (data.address) {
+                    const detectedCity = data.address.city || data.address.town || data.address.village || data.address.state_district || '';
+                    if (detectedCity) {
+                        setCity(detectedCity);
+                    }
+                }
+            } catch (err) {
+                console.warn('Failed to detect city name:', err);
+            } finally {
+                setDetectingLocation(false);
+            }
+        }, (err) => {
+            console.error('Geolocation error:', err);
+            setDetectingLocation(false);
+        });
+    };
+
+    const handleProfileCreation = async (e: React.FormEvent) => {
         e.preventDefault();
         setError('');
         setLoading(true);
 
+        if (!user) {
+            setError('No authenticated user found');
+            setLoading(false);
+            return;
+        }
+
+        if (role === 'tutor' && selectedCategories.length === 0) {
+            setError('Please select at least one service category');
+            setLoading(false);
+            return;
+        }
+
         try {
-            const additionalData: any = {
-                firstName,
-                lastName,
-                city,
+            const userDoc: User = {
+                uid: user.uid,
+                email: '', // Phone auth users don't have email
+                phoneNumber: user.phoneNumber || '',
+                role,
+                createdAt: serverTimestamp() as any,
+                ...(role === 'student' && {
+                    studentProfile: {
+                        firstName,
+                        lastName,
+                        gender,
+                        city,
+                        favorites: [],
+                        coordinates: coordinates || undefined,
+                    },
+                }),
+                ...(role === 'tutor' && {
+                    tutorProfile: {
+                        firstName,
+                        lastName,
+                        bio: '',
+                        subjects: selectedCategories, // Use selected categories
+                        grades: [],
+                        hourlyRate: 0,
+                        experience: 0,
+                        teachingType: [],
+                        gender: '', // Removed from form
+                        city,
+                        area: '', // Removed from form
+                        verified: false,
+                        verificationDocuments: [],
+                        averageRating: 0,
+                        totalRatings: 0,
+                        profileViews: 0,
+                        coordinates: coordinates || undefined,
+                        subscription: {
+                            plan: null,
+                            status: 'pending',
+                            startDate: null,
+                            endDate: null,
+                        },
+                    },
+                }),
             };
 
-            if (role === 'student') {
-                additionalData.grade = grade;
-            } else if (role === 'tutor') {
-                additionalData.gender = gender;
-                additionalData.area = area;
-            }
+            await setDoc(doc(db, 'users', user.uid), userDoc);
 
-            await signUp(email, password, role, additionalData);
+            // Redirect to dashboard
             router.push('/');
         } catch (err: any) {
-            setError(err.message || 'Failed to create account');
-        } finally {
+            setError(err.message || 'Failed to create profile');
             setLoading(false);
         }
     };
 
-    const handleGoogleSignup = async () => {
-        setError('');
-        setLoading(true);
-
-        try {
-            await signInWithGoogle();
-            router.push('/');
-        } catch (err: any) {
-            setError(err.message || 'Failed to sign up with Google');
-        } finally {
-            setLoading(false);
-        }
-    };
+    if (authLoading || !user) {
+        return (
+            <div className="min-h-screen flex items-center justify-center">
+                <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+            </div>
+        );
+    }
 
     return (
-        <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-primary/10 via-background to-accent/10">
-            <Card className="w-full max-w-2xl">
-                <CardHeader>
-                    <CardTitle className="text-2xl text-center">Create Account</CardTitle>
-                    <p className="text-center text-muted-foreground">Join QuickFix today</p>
-                </CardHeader>
-                <CardContent>
-                    {error && (
-                        <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 rounded-md text-red-500 text-sm">
-                            {error}
-                        </div>
-                    )}
+        <div className="min-h-screen bg-white pb-safe">
+            {/* Full Width Header */}
+            <div className={`w-full py-12 px-6 text-center ${role === 'tutor' ? 'bg-[#5A0E24]' : 'bg-[#005461]'} text-white rounded-b-[3rem] shadow-lg relative overflow-hidden`}>
+                {/* Decorative background circle */}
+                <div className="absolute top-[-50%] left-[-20%] w-[140%] h-[200%] bg-white/5 rounded-full blur-3xl pointer-events-none"></div>
 
-                    {/* Role Selection */}
-                    <div className="mb-6">
-                        <label className="block text-sm font-medium mb-3">I am a...</label>
-                        <div className="grid grid-cols-2 gap-4">
-                            <button
-                                type="button"
-                                onClick={() => setRole('student')}
-                                className={`p-4 rounded-lg border-2 transition-all ${role === 'student'
-                                    ? 'border-primary bg-primary/10'
-                                    : 'border-input hover:border-primary/50'
-                                    }`}
-                            >
-                                <div className="text-2xl mb-2">👤</div>
-                                <div className="font-semibold">Customer</div>
-                                <div className="text-xs text-muted-foreground">Book services</div>
-                            </button>
-                            <button
-                                type="button"
-                                onClick={() => setRole('tutor')}
-                                className={`p-4 rounded-lg border-2 transition-all ${role === 'tutor'
-                                    ? 'border-primary bg-primary/10'
-                                    : 'border-input hover:border-primary/50'
-                                    }`}
-                            >
-                                <div className="text-2xl mb-2">🔧</div>
-                                <div className="font-semibold">Service Provider</div>
-                                <div className="text-xs text-muted-foreground">Offer services</div>
-                            </button>
+                <div className="relative z-10 pt-4">
+                    <h1 className="text-3xl font-bold mb-3 tracking-tight">
+                        {role === 'tutor' ? 'Partner Registration' : 'Customer Registration'}
+                    </h1>
+                    <p className="text-white/90 text-sm max-w-xs mx-auto font-medium opacity-90 leading-relaxed">
+                        {role === 'tutor' ? 'Join our professional network and start earning today.' : 'Create your account to discover and book top-rated services.'}
+                    </p>
+                </div>
+            </div>
+
+            {/* Content Container - Clean & Full Width */}
+            <div className="w-full px-6 py-10 max-w-4xl mx-auto">
+                {error && (
+                    <div className="mb-8 p-4 bg-red-50 border border-red-100 rounded-xl text-red-600 text-sm flex items-center gap-3 animate-fade-in">
+                        <div className="p-2 bg-red-100 rounded-full shrink-0">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
                         </div>
+                        {error}
                     </div>
+                )}
 
-                    <form onSubmit={handleSignup} className="space-y-4">
-                        <div className="grid md:grid-cols-2 gap-4">
-                            <div>
-                                <label className="block text-sm font-medium mb-2">First Name</label>
+                <form onSubmit={handleProfileCreation} className="space-y-8">
+                    <div className="space-y-6">
+                        <h2 className="text-lg font-bold text-gray-900 border-b pb-2">Personal Details</h2>
+                        <div className="grid md:grid-cols-2 gap-6">
+                            <div className="space-y-2">
+                                <label className="text-sm font-semibold text-gray-700 ml-1">First Name</label>
                                 <input
                                     type="text"
                                     value={firstName}
                                     onChange={(e) => setFirstName(e.target.value)}
-                                    className="w-full p-3 rounded-md border border-input bg-background focus:outline-none focus:ring-2 focus:ring-primary"
+                                    className="w-full p-4 rounded-xl border border-gray-200 bg-gray-50/50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-lg"
+                                    placeholder="John"
                                     required
                                 />
                             </div>
-                            <div>
-                                <label className="block text-sm font-medium mb-2">Last Name</label>
+                            <div className="space-y-2">
+                                <label className="text-sm font-semibold text-gray-700 ml-1">Last Name</label>
                                 <input
                                     type="text"
                                     value={lastName}
                                     onChange={(e) => setLastName(e.target.value)}
-                                    className="w-full p-3 rounded-md border border-input bg-background focus:outline-none focus:ring-2 focus:ring-primary"
+                                    className="w-full p-4 rounded-xl border border-gray-200 bg-gray-50/50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-lg"
+                                    placeholder="Doe"
                                     required
                                 />
                             </div>
                         </div>
-
-                        <div>
-                            <label className="block text-sm font-medium mb-2">Email</label>
-                            <input
-                                type="email"
-                                value={email}
-                                onChange={(e) => setEmail(e.target.value)}
-                                className="w-full p-3 rounded-md border border-input bg-background focus:outline-none focus:ring-2 focus:ring-primary"
-                                placeholder="you@example.com"
-                                required
+                        {role === 'student' && (
+                            <CustomSelect
+                                label="Gender"
+                                value={gender}
+                                onChange={(val) => setGender(val)}
+                                options={[
+                                    { value: 'Male', label: 'Male' },
+                                    { value: 'Female', label: 'Female' },
+                                    { value: 'Others', label: 'Others' }
+                                ]}
+                                placeholder="Select Gender"
+                                className="p-4 rounded-xl border border-gray-200 bg-gray-50/50 focus:bg-white focus:ring-2 focus:ring-primary/20 focus:border-primary text-lg"
                             />
-                        </div>
+                        )}
+                    </div>
 
-                        <div>
-                            <label className="block text-sm font-medium mb-2">Password</label>
-                            <input
-                                type="password"
-                                value={password}
-                                onChange={(e) => setPassword(e.target.value)}
-                                className="w-full p-3 rounded-md border border-input bg-background focus:outline-none focus:ring-2 focus:ring-primary"
-                                placeholder="••••••••"
-                                minLength={6}
-                                required
-                            />
-                        </div>
-
-                        {/* City field - full width for customers, half width for service providers */}
-                        <div className={role === 'tutor' ? "grid md:grid-cols-2 gap-4" : ""}>
-                            <div>
-                                <label className="block text-sm font-medium mb-2">City</label>
-                                <input
-                                    type="text"
-                                    value={city}
-                                    onChange={(e) => setCity(e.target.value)}
-                                    className="w-full p-3 rounded-md border border-input bg-background focus:outline-none focus:ring-2 focus:ring-primary"
-                                    placeholder="e.g., Mumbai, Delhi, Bangalore"
-                                    required
-                                />
-                            </div>
-
-                            {role === 'tutor' && (
-                                <div>
-                                    <label className="block text-sm font-medium mb-2">Gender</label>
-                                    <select
-                                        value={gender}
-                                        onChange={(e) => setGender(e.target.value)}
-                                        className="w-full p-3 rounded-md border border-input bg-background focus:outline-none focus:ring-2 focus:ring-primary"
-                                        required
+                    {/* Role Specific Fields */}
+                    {role === 'tutor' && (
+                        <div className="space-y-6">
+                            <h2 className="text-lg font-bold text-gray-900 border-b pb-2 flex justify-between items-center">
+                                Services
+                                <span className="text-xs font-normal text-gray-500 bg-gray-100 px-3 py-1 rounded-full">Select up to 3</span>
+                            </h2>
+                            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                                {SERVICE_CATEGORIES.map((cat) => (
+                                    <button
+                                        key={cat}
+                                        type="button"
+                                        onClick={() => toggleCategory(cat)}
+                                        className={`relative p-2 rounded-xl text-sm font-semibold transition-all border flex items-center justify-center text-center group h-14  shadow-sm hover:shadow-md ${selectedCategories.includes(cat)
+                                            ? 'bg-[#5A0E24] text-white border-[#5A0E24] transform scale-[1.05]'
+                                            : 'bg-white text-gray-600 border-gray-100 hover:border-[#5A0E24]/30 hover:bg-gray-50'
+                                            }`}
                                     >
-                                        <option value="">Select gender</option>
-                                        <option value="Male">Male</option>
-                                        <option value="Female">Female</option>
-                                    </select>
-                                </div>
+                                        <span className="truncate px-3">{cat}</span>
+                                        {selectedCategories.includes(cat) && (
+                                            <span className="absolute top-1 right-1 bg-white/20 p-0.5 rounded-full">
+                                                <svg className="w-2 h-2 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                                            </span>
+                                        )}
+                                    </button>
+                                ))}
+                            </div>
+                            {selectedCategories.length === 0 && (
+                                <p className="text-sm text-amber-600 flex items-center gap-2 bg-amber-50 p-3 rounded-lg">
+                                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                                    Please verify your expertise by selecting at least one category.
+                                </p>
                             )}
                         </div>
+                    )}
 
-                        {role === 'tutor' && (
-                            <div>
-                                <label className="block text-sm font-medium mb-2">Service Area</label>
-                                <input
-                                    type="text"
-                                    value={area}
-                                    onChange={(e) => setArea(e.target.value)}
-                                    className="w-full p-3 rounded-md border border-input bg-background focus:outline-none focus:ring-2 focus:ring-primary"
-                                    placeholder="e.g., South Delhi, Andheri West, Koramangala"
-                                    required
-                                />
+                    {/* City field with Auto-detect */}
+                    <div className="space-y-6">
+                        <h2 className="text-lg font-bold text-gray-900 border-b pb-2">Location</h2>
+                        <div className="space-y-2">
+                            <label className="text-sm font-semibold text-gray-700 ml-1">Your City</label>
+                            <div className="flex gap-3">
+                                <div className="relative flex-1">
+                                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                                        <svg className="h-6 w-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
+                                    </div>
+                                    <input
+                                        type="text"
+                                        value={city}
+                                        onChange={(e) => setCity(e.target.value)}
+                                        className="w-full pl-12 h-14 rounded-xl border border-gray-200 bg-gray-50/50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-lg"
+                                        placeholder="e.g., Mumbai"
+                                        required
+                                    />
+                                </div>
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    onClick={detectLocation}
+                                    disabled={detectingLocation}
+                                    className="whitespace-nowrap px-6 border-gray-200 hover:bg-gray-50 hover:text-primary rounded-xl h-14"
+                                >
+                                    {detectingLocation ? (
+                                        <span className="flex items-center gap-2">
+                                            <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                        </span>
+                                    ) : (
+                                        <span className="text-sm font-medium">Detect Location</span>
+                                    )}
+                                </Button>
                             </div>
-                        )}
-
-                        <Button type="submit" className="w-full" disabled={loading}>
-                            {loading ? 'Creating account...' : 'Create Account'}
-                        </Button>
-                    </form>
-
-                    <div className="my-6 flex items-center gap-4">
-                        <div className="flex-1 h-px bg-border"></div>
-                        <span className="text-sm text-muted-foreground">OR</span>
-                        <div className="flex-1 h-px bg-border"></div>
+                            {coordinates && (
+                                <p className="text-sm text-emerald-600 flex items-center gap-2 font-medium animate-fade-in bg-emerald-50 p-2 rounded-lg">
+                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                                    GPS Coordinates captured
+                                </p>
+                            )}
+                        </div>
                     </div>
 
                     <Button
-                        type="button"
-                        variant="outline"
-                        className="w-full"
-                        onClick={handleGoogleSignup}
+                        type="submit"
+                        className={`w-full py-0 h-16 text-xl font-bold shadow-xl shadow-primary/20 mt-8 rounded-2xl ${role === 'tutor' ? 'bg-[#5A0E24] hover:bg-[#3d0918]' : 'bg-[#005461] hover:bg-[#003d47]'} transition-all hover:scale-[1.02] active:scale-[0.98]`}
                         disabled={loading}
                     >
-                        <svg className="w-5 h-5 mr-2" viewBox="0 0 24 24">
-                            <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                            <path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                            <path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
-                            <path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
-                        </svg>
-                        Continue with Google
+                        {loading ? (
+                            <span className="flex items-center justify-center gap-3">
+                                <svg className="animate-spin h-6 w-6" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                                Setting up...
+                            </span>
+                        ) : 'Complete Profile'}
                     </Button>
 
-                    <div className="mt-6 text-center text-sm">
-                        <span className="text-muted-foreground">Already have an account? </span>
-                        <Link href="/auth/login" className="text-primary hover:underline font-medium">
-                            Sign in
-                        </Link>
+                    <div className="text-center pt-8 pb-10">
+                        <button
+                            type="button"
+                            onClick={() => {
+                                signOut();
+                                router.push('/welcome');
+                            }}
+                            className="text-sm font-medium text-gray-500 hover:text-gray-900 transition-colors"
+                        >
+                            Not {role === 'tutor' ? 'a Service Provider' : 'a Customer'}? <span className="underline ml-1">Change Role</span>
+                        </button>
                     </div>
-                </CardContent>
-            </Card>
+                </form>
+            </div>
         </div>
     );
 }

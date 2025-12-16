@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from './Card';
 
 interface SearchFiltersProps {
+    initialCategory?: string;
     onFilterChange: (filters: {
         category: string;
         serviceType: string;
@@ -11,8 +12,8 @@ interface SearchFiltersProps {
     }) => void;
 }
 
-export function SearchFilters({ onFilterChange }: SearchFiltersProps) {
-    const [category, setCategory] = useState('');
+export function SearchFilters({ initialCategory, onFilterChange }: SearchFiltersProps) {
+    const [category, setCategory] = useState(initialCategory || '');
     const [serviceType, setServiceType] = useState('');
     const [location, setLocation] = useState('');
 
@@ -31,68 +32,36 @@ export function SearchFilters({ onFilterChange }: SearchFiltersProps) {
     };
 
     return (
-        <Card>
-            <CardHeader>
-                <CardTitle>Filters</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-                <div>
-                    <label className="text-sm font-medium mb-2 block">Service Category</label>
-                    <select
-                        className="w-full p-2 border rounded-md bg-background"
-                        value={category}
-                        onChange={(e) => handleChange('category', e.target.value)}
-                    >
-                        <option value="">All Categories</option>
-                        <option value="electrical">⚡ Electrical</option>
-                        <option value="plumbing">🚰 Plumbing</option>
-                        <option value="carpentry">🪚 Carpentry</option>
-                        <option value="cleaning">🧹 Cleaning</option>
-                        <option value="painting">🎨 Painting</option>
-                        <option value="appliance">🔌 Appliance Repair</option>
-                        <option value="pest">🐜 Pest Control</option>
-                        <option value="maintenance">🏠 Home Maintenance</option>
-                    </select>
-                </div>
+        <Card className="mb-6">
+            <CardContent className="p-4">
+                <div className="flex flex-col md:flex-row gap-4 items-end">
+                    <div className="w-full md:w-1/2">
+                        <label className="text-sm font-medium mb-1.5 block">Service Category</label>
+                        <select
+                            className="w-full p-2 border rounded-md bg-background text-sm"
+                            value={category}
+                            onChange={(e) => handleChange('category', e.target.value)}
+                        >
+                            <option value="">All Categories</option>
+                            <option value="plumbing">🚰 Plumbing</option>
+                            <option value="electrical">⚡ Electrical</option>
+                            <option value="carpentry">🪚 Carpentry</option>
+                            <option value="painting">🎨 Painting</option>
+                            <option value="it">💻 IT Services</option>
+                            <option value="ac">❄️ AC Services</option>
+                            <option value="event">🎉 Event Planner</option>
+                            <option value="interior">🏠 Interior Designing</option>
+                            <option value="appliances">🔌 Kitchen Appliances</option>
+                            <option value="repairing">🔧 Repairing</option>
+                        </select>
+                    </div>
 
-                <div>
-                    <label className="text-sm font-medium mb-2 block">Service Type</label>
-                    <select
-                        className="w-full p-2 border rounded-md bg-background"
-                        value={serviceType}
-                        onChange={(e) => handleChange('serviceType', e.target.value)}
-                    >
-                        <option value="">All Types</option>
-                        <option value="installation">Installation</option>
-                        <option value="repair">Repair</option>
-                        <option value="maintenance">Maintenance</option>
-                        <option value="emergency">Emergency Service</option>
-                    </select>
-                </div>
-
-                <div>
-                    <label className="text-sm font-medium mb-2 block">Location</label>
-                    <input
-                        type="text"
-                        placeholder="Enter your area..."
-                        className="w-full p-2 border rounded-md bg-background"
-                        value={location}
-                        onChange={(e) => handleChange('location', e.target.value)}
-                    />
-                </div>
-
-                {/* Fixed Visiting Charge Notice */}
-                <div className="mt-6 p-3 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-md">
-                    <div className="text-sm">
-                        <p className="font-semibold text-blue-900 dark:text-blue-100 mb-1">
-                            💰 Visiting Charges
-                        </p>
-                        <p className="text-blue-800 dark:text-blue-200">
-                            Fixed at <strong>₹99</strong> for all service providers
-                        </p>
-                        <p className="text-xs text-blue-700 dark:text-blue-300 mt-1">
-                            Actual service charges will be provided after on-site inspection
-                        </p>
+                    {/* Fixed Visiting Charge Notice - Compact Version */}
+                    <div className="w-full md:w-1/4 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-md p-2 flex items-center justify-center text-center">
+                        <div className="text-xs text-blue-800 dark:text-blue-200">
+                            <span className="font-bold">Fixed Visit Charge: ₹99</span>
+                            <span className="block text-[10px] opacity-80">Final price after inspection</span>
+                        </div>
                     </div>
                 </div>
             </CardContent>

@@ -65,7 +65,7 @@ export class RatingService {
     }
 
     // Get tutor's ratings
-    static async getTutorRatings(tutorId: string, limit: number = 10): Promise<any[]> {
+    static async getTutorRatings(tutorId: string, limit: number = 10): Promise<(Rating & { studentName?: string })[]> {
         const q = query(
             collection(db, 'ratings'),
             where('tutorId', '==', tutorId),
@@ -74,15 +74,37 @@ export class RatingService {
         );
 
         const snapshot = await getDocs(q);
-        return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Rating));
+
+        const ratings = await Promise.all(snapshot.docs.map(async (docSnapshot) => {
+            const data = docSnapshot.data();
+            let studentName = 'Anonymous';
+
+            try {
+                const studentDocRef = doc(db, 'users', data.studentId);
+                const studentDocSnap = await import('firebase/firestore').then(mod => mod.getDoc(studentDocRef));
+
+                if (studentDocSnap.exists()) {
+                    const studentData = studentDocSnap.data();
+                    if (studentData.studentProfile) {
+                        studentName = `${studentData.studentProfile.firstName} ${studentData.studentProfile.lastName}`;
+                    }
+                }
+            } catch (error) {
+                console.error('Error fetching student name for rating:', error);
+            }
+
+            return { id: docSnapshot.id, ...data, studentName } as Rating & { studentName?: string };
+        }));
+
+        return ratings;
     }
 
     // Get student's ratings (their rating history)
     static async getStudentRatings(studentId: string): Promise<Rating[]> {
         const q = query(
             collection(db, 'ratings'),
-            where('studentId', '==', studentId),
-            orderBy('timestamp', 'desc')
+            where('studentId', '==', studentId)
+            // orderBy('timestamp', 'desc') // Removed to avoid index requirement
         );
 
         const snapshot = await getDocs(q);

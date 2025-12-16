@@ -13,6 +13,7 @@ export interface User {
     tutorProfile?: TutorProfile;
     fcmTokens?: string[]; // Firebase Cloud Messaging tokens for push notifications
     notificationSettings?: NotificationSettings;
+    phoneNumber?: string;
 }
 
 // Notification Settings
@@ -28,9 +29,15 @@ export interface NotificationSettings {
 export interface StudentProfile {
     firstName: string;
     lastName: string;
-    grade: string;
+    gender: string;
     city: string;
+    address?: string;
     favorites: string[]; // tutor UIDs
+    profilePicture?: string; // Storage URL
+    coordinates?: {
+        latitude: number;
+        longitude: number;
+    };
 }
 
 // Tutor Profile
@@ -46,15 +53,35 @@ export interface TutorProfile {
     gender: string;
     city: string;
     area: string;
+    category?: string;
+    address?: string;
+    coordinates?: {
+        latitude: number;
+        longitude: number;
+    };
     profilePicture?: string; // Storage URL
     introVideo?: string; // Storage URL
     verified: boolean;
-    verificationDocuments: string[]; // Storage URLs
+    kyc?: KYCData;
+    verificationDocuments: string[]; // Legacy, keep for backward compatibility if needed
     rejectionReason?: string; // Admin rejection reason
     averageRating: number;
     totalRatings: number;
     profileViews: number;
     subscription: SubscriptionStatus;
+    isActivated?: boolean; // Controls global visibility (Provider controlled)
+    isSuspended?: boolean; // Controls access to app (Admin controlled)
+}
+
+export interface KYCData {
+    idProofUrl: string;
+    idNumber?: string;
+    photoUrl?: string; // Captured photo
+    addressProofUrl?: string;
+    status: 'pending' | 'approved' | 'rejected';
+    submittedAt: string;
+    rejectionReason?: string;
+    idType?: string; // Added to match usage in tutor.service.ts
 }
 
 // Subscription Status
@@ -72,6 +99,7 @@ export interface Chat {
     lastMessage: string;
     lastMessageTime: Timestamp;
     unreadCount: { [uid: string]: number };
+    bookingId?: string; // Link to specific booking
 }
 
 // Message
@@ -131,6 +159,20 @@ export interface Complaint {
     createdAt: Timestamp;
     resolvedAt?: Timestamp;
     adminNotes?: string;
+}
+
+// Suspension Appeal (Provider Appeal)
+export interface SuspensionAppeal {
+    id: string;
+    userId: string;
+    mobile: string;
+    description: string;
+    status: 'pending' | 'reviewed' | 'resolved';
+    createdAt: Timestamp;
+    resolvedAt?: Timestamp;
+    adminNotes?: string;
+    userEmail?: string; // Denormalized for easy display
+    userName?: string; // Denormalized for easy display
 }
 
 // Subscription Record
@@ -195,8 +237,10 @@ export interface Booking {
     // Denormalized for easy display
     studentName?: string;
     tutorName?: string;
+    address?: string;
 
     // Job completion verification fields
+    startCode?: string;                // 6-digit random code to start job
     completionCode?: string;           // 6-digit random code
     jobStartedAt?: Timestamp;          // When provider started work
     jobCompletedAt?: Timestamp;        // When job was completed
@@ -212,6 +256,7 @@ export interface Booking {
     finalPaymentId?: string;           // Razorpay payment ID for final payment
     finalPaymentStatus?: 'pending' | 'completed' | 'failed';
     paidAt?: Timestamp;                // When final payment was completed
+    paymentMethod?: 'cash' | 'online'; // Method of final payment
 
     // Rating tracking
     rated?: boolean;                   // Has customer rated this service

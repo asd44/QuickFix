@@ -3,9 +3,11 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/Card';
+import { Button } from '@/components/Button';
 import { Badge } from '@/components/Badge';
 import { InterestedStudentService } from '@/lib/services/interested-student.service';
 import { BookingService } from '@/lib/services/booking.service';
+import { TutorService } from '@/lib/services/tutor.service';
 import { InterestedStudent, Booking } from '@/lib/types/database';
 import Link from 'next/link';
 
@@ -14,6 +16,8 @@ export default function TutorDashboard() {
     const [interestedStudents, setInterestedStudents] = useState<InterestedStudent[]>([]);
     const [bookings, setBookings] = useState<(Booking & { id: string })[]>([]);
     const [loading, setLoading] = useState(true);
+    const [statusUpdating, setStatusUpdating] = useState(false);
+    const [isActivated, setIsActivated] = useState(true); // Default to active
 
     useEffect(() => {
         if (user && userData?.role === 'tutor') {
@@ -40,6 +44,26 @@ export default function TutorDashboard() {
             });
         }
     }, [user, userData]);
+
+    useEffect(() => {
+        if (userData?.tutorProfile) {
+            setIsActivated(userData.tutorProfile.isActivated ?? true);
+        }
+    }, [userData]);
+
+    const handleToggleStatus = async () => {
+        if (!user) return;
+        try {
+            setStatusUpdating(true);
+            const newStatus = !isActivated;
+            await TutorService.toggleProfileStatus(user.uid, newStatus);
+            setIsActivated(newStatus);
+        } catch (error) {
+            console.error('Failed to toggle status:', error);
+        } finally {
+            setStatusUpdating(false);
+        }
+    };
 
     if (!user || !userData?.tutorProfile) {
         return (
@@ -84,7 +108,51 @@ export default function TutorDashboard() {
             <h1 className="text-3xl font-bold">Welcome, {profile.firstName}!</h1>
 
             {/* Stats Grid */}
-            <div className="grid md:grid-cols-5 gap-6">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-6">
+                {/* Profile Status Card */}
+                <Card className={`transition-all duration-300 border-2 ${isActivated ? 'border-green-100 bg-green-50/10' : 'border-red-100 bg-red-50/10'}`}>
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-sm font-medium text-muted-foreground flex justify-between items-center">
+                            <span>Profile Visibility</span>
+                            <span className="relative flex h-3 w-3">
+                                {isActivated && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>}
+                                <span className={`relative inline-flex rounded-full h-3 w-3 ${isActivated ? 'bg-green-500' : 'bg-red-500'}`}></span>
+                            </span>
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                        <div className="flex flex-col gap-4">
+                            <div>
+                                <span className={`text-2xl font-bold block mb-1 ${isActivated ? 'text-green-700' : 'text-red-700'}`}>
+                                    {isActivated ? 'Online' : 'Offline'}
+                                </span>
+                                <p className="text-xs text-muted-foreground leading-tight">
+                                    {isActivated ? 'Your profile is visible to students in search results.' : 'You are currently hidden. Students cannot find you.'}
+                                </p>
+                            </div>
+
+                            <Button
+                                variant={isActivated ? "primary" : "primary"}
+                                size="sm"
+                                onClick={handleToggleStatus}
+                                isLoading={statusUpdating}
+                                className={`w-full flex items-center justify-center gap-2 h-10 font-medium ${isActivated ? "bg-red-600 text-white hover:bg-red-700 shadow-md shadow-red-200" : "bg-green-600 hover:bg-green-700 shadow-md shadow-green-200"}`}
+                            >
+                                {isActivated ? (
+                                    <>
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" /></svg>
+                                        Go Offline
+                                    </>
+                                ) : (
+                                    <>
+                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5.636 18.364a9 9 0 010-12.728m12.728 0a9 9 0 010 12.728m-9.9-2.829a5 5 0 010-7.07m7.072 0a5 5 0 010 7.07M13 12a1 1 0 11-2 0 1 1 0 012 0z" /></svg>
+                                        Go Online
+                                    </>
+                                )}
+                            </Button>
+                        </div>
+                    </CardContent>
+                </Card>
                 {stats.map((stat, i) => (
                     <Card key={i}>
                         <CardHeader className="pb-2">

@@ -3,28 +3,24 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import {
     User as FirebaseUser,
-    createUserWithEmailAndPassword,
-    signInWithEmailAndPassword,
-    signInWithPopup,
-    GoogleAuthProvider,
     signOut as firebaseSignOut,
     onAuthStateChanged,
-    sendEmailVerification,
-    sendPasswordResetEmail,
+    RecaptchaVerifier,
+    signInWithPhoneNumber,
+    ConfirmationResult,
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
 import { auth, db } from '@/lib/firebase/config';
-import { User, UserRole } from '@/lib/types/database';
+import { User } from '@/lib/types/database';
 
 interface AuthContextType {
     user: FirebaseUser | null;
     userData: User | null;
     loading: boolean;
-    signUp: (email: string, password: string, role: UserRole, additionalData: any) => Promise<void>;
-    signIn: (email: string, password: string) => Promise<void>;
-    signInWithGoogle: () => Promise<void>;
+    signInWithPhone: (phoneNumber: string, appVerifier: RecaptchaVerifier) => Promise<void>;
+    signInWithEmail: (email: string, password: string) => Promise<void>;
+    verifyOTP: (otp: string) => Promise<boolean>;
     signOut: () => Promise<void>;
-    resetPassword: (email: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -33,131 +29,57 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [user, setUser] = useState<FirebaseUser | null>(null);
     const [userData, setUserData] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
+    const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
 
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
             setUser(firebaseUser);
 
             if (firebaseUser) {
-                // Fetch user data from Firestore with error handling
-                try {
-                    const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-                    if (userDoc.exists()) {
-                        setUserData(userDoc.data() as User);
+                // Subscribe to user document changes
+                const unsubscribeUser = onSnapshot(doc(db, 'users', firebaseUser.uid), (docSnapshot) => {
+                    if (docSnapshot.exists()) {
+                        setUserData(docSnapshot.data() as User);
+
+                        // Initialize Notifications
+                        import('@/lib/services/notification.service').then(async ({ NotificationService }) => {
+                            // 1. Request permissions (Native only)
+                            await NotificationService.requestPermissions();
+
+                            // 2. Register listeners (Native only)
+                            NotificationService.registerListeners(firebaseUser.uid);
+
+                            // 3. Listen to Firestore notifications (In-App)
+                            NotificationService.listenToNotifications(firebaseUser.uid, (notifications) => {
+                                console.log('Received in-app notifications:', notifications);
+                                // You could update a global notification state here if needed
+                            });
+                        });
                     } else {
-                        // User document doesn't exist yet
                         setUserData(null);
                     }
-                } catch (error) {
-                    // Handle Firestore permission errors gracefully
+                    setLoading(false);
+                }, (error) => {
                     console.warn('Could not fetch user data from Firestore:', error);
                     setUserData(null);
-                }
+                    setLoading(false);
+                });
+
+                // Cleanup subscription on auth state change or unmount
+                return () => {
+                    unsubscribeUser();
+                };
             } else {
                 setUserData(null);
+                setLoading(false);
             }
-
-            setLoading(false);
         });
 
         return unsubscribe;
     }, []);
 
-    const signUp = async (
-        email: string,
-        password: string,
-        role: UserRole,
-        additionalData: any
-    ) => {
-        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-        const { user } = userCredential;
-
-        // Send email verification
-        await sendEmailVerification(user);
-
-        // Create user document in Firestore
-        const userDoc: User = {
-            uid: user.uid,
-            email: user.email!,
-            role,
-            createdAt: serverTimestamp() as any,
-            ...(role === 'student' && {
-                studentProfile: {
-                    firstName: additionalData.firstName,
-                    lastName: additionalData.lastName,
-                    grade: additionalData.grade,
-                    city: additionalData.city,
-                    favorites: [],
-                },
-            }),
-            ...(role === 'tutor' && {
-                tutorProfile: {
-                    firstName: additionalData.firstName,
-                    lastName: additionalData.lastName,
-                    bio: '',
-                    subjects: [],
-                    grades: [],
-                    hourlyRate: 0,
-                    experience: 0,
-                    teachingType: [],
-                    gender: additionalData.gender || '',
-                    city: additionalData.city || '',
-                    area: additionalData.area || '',
-                    verified: false,
-                    verificationDocuments: [],
-                    averageRating: 0,
-                    totalRatings: 0,
-                    profileViews: 0,
-                    subscription: {
-                        plan: null,
-                        status: 'pending',
-                        startDate: null,
-                        endDate: null,
-                    },
-                },
-            }),
-        };
-
-        await setDoc(doc(db, 'users', user.uid), userDoc);
-        setUserData(userDoc);
-    };
-
-    const signIn = async (email: string, password: string) => {
-        await signInWithEmailAndPassword(auth, email, password);
-    };
-
-    const signInWithGoogle = async () => {
-        const provider = new GoogleAuthProvider();
-        const userCredential = await signInWithPopup(auth, provider);
-        const { user } = userCredential;
-
-        // Check if user document exists
-        const userDoc = await getDoc(doc(db, 'users', user.uid));
-
-        if (!userDoc.exists()) {
-            // Create new user document (default to student)
-            const newUserDoc: User = {
-                uid: user.uid,
-                email: user.email!,
-                role: 'student',
-                createdAt: serverTimestamp() as any,
-                studentProfile: {
-                    firstName: user.displayName?.split(' ')[0] || '',
-                    lastName: user.displayName?.split(' ')[1] || '',
-                    grade: '',
-                    city: '',
-                    favorites: [],
-                },
-            };
-
-            await setDoc(doc(db, 'users', user.uid), newUserDoc);
-            setUserData(newUserDoc);
-        }
-    };
-
     const signOut = async () => {
         try {
-            // Try to update user's online status, but don't fail if permissions are missing
             if (user) {
                 try {
                     await updateDoc(doc(db, 'users', user.uid), {
@@ -165,7 +87,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                         isOnline: false
                     });
                 } catch (firestoreError) {
-                    // Silently ignore Firestore errors during signout
                     console.warn('Could not update user status during signout:', firestoreError);
                 }
             }
@@ -178,19 +99,57 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
     };
 
-    const resetPassword = async (email: string) => {
-        await sendPasswordResetEmail(auth, email);
+    const signInWithEmail = async (email: string, password: string) => {
+        try {
+            const { signInWithEmailAndPassword } = await import('firebase/auth');
+            await signInWithEmailAndPassword(auth, email, password);
+        } catch (error) {
+            console.error('Error signing in with email:', error);
+            throw error;
+        }
+    };
+
+    const signInWithPhone = async (phoneNumber: string, appVerifier: RecaptchaVerifier) => {
+        try {
+            const confirmation = await signInWithPhoneNumber(auth, phoneNumber, appVerifier);
+            setConfirmationResult(confirmation);
+        } catch (error) {
+            console.error('Error sending OTP:', error);
+            throw error;
+        }
+    };
+
+    const verifyOTP = async (otp: string): Promise<boolean> => {
+        if (!confirmationResult) {
+            throw new Error('No OTP request found');
+        }
+        try {
+            const result = await confirmationResult.confirm(otp);
+            const user = result.user;
+
+            // Check if user document exists
+            const userDoc = await getDoc(doc(db, 'users', user.uid));
+
+            if (userDoc.exists()) {
+                setUserData(userDoc.data() as User);
+                return true; // User exists
+            } else {
+                return false; // User is new
+            }
+        } catch (error) {
+            console.error('Error verifying OTP:', error);
+            throw error;
+        }
     };
 
     const value = {
         user,
         userData,
         loading,
-        signUp,
-        signIn,
-        signInWithGoogle,
         signOut,
-        resetPassword,
+        signInWithPhone,
+        signInWithEmail,
+        verifyOTP,
     };
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

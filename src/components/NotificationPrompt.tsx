@@ -31,12 +31,9 @@ export function NotificationPrompt() {
         if (permission === 'granted') {
             onMessageListener()
                 .then((payload: any) => {
-                    NotificationService.showNotification(
-                        payload.notification?.title || 'New Notification',
-                        payload.notification?.body || '',
-                        payload.notification?.icon,
-                        payload.data?.clickAction
-                    );
+                    console.log('Notification received:', payload);
+                    // NotificationService.showNotification is not implemented yet
+                    // You can implement a local toast here if needed
                 })
                 .catch((err) => console.error('Error listening to messages:', err));
         }
@@ -47,11 +44,13 @@ export function NotificationPrompt() {
 
         setLoading(true);
         try {
-            const success = await NotificationService.enableNotifications(user.uid);
+            const success = await NotificationService.requestPermissions();
             if (success) {
                 setPermission('granted');
                 setShowPrompt(false);
             } else {
+                // For web, we might need to handle it differently if requestPermissions only supports native
+                // But for now, let's assume it returns false for web if not implemented
                 alert('Failed to enable notifications. Please check browser settings.');
             }
         } catch (error) {

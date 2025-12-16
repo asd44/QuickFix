@@ -14,13 +14,14 @@ import { RatingService } from '@/lib/services/rating.service';
 import { ChatService } from '@/lib/services/chat.service';
 import { Booking } from '@/lib/types/database';
 import { format, isPast, isFuture, isToday } from 'date-fns';
+import { BackHeader } from '@/components/BackHeader';
 
 export default function StudentBookingsPage() {
     const { user } = useAuth();
     const router = useRouter();
-    const [bookings, setBookings] = useState<(Booking & { id: string })[]>([]);
+    const [bookings, setBookings] = useState<(Booking & { id: string, tutorPhoneNumber?: string })[]>([]);
     const [loading, setLoading] = useState(true);
-    const [filter, setFilter] = useState<'upcoming' | 'past' | 'cancelled'>('upcoming');
+    const [filter, setFilter] = useState<'all' | 'pending' | 'confirmed' | 'in_progress' | 'completed' | 'cancelled'>('all');
     const [regeneratingCode, setRegeneratingCode] = useState<string | null>(null);
 
     // Rating modal state
@@ -78,6 +79,19 @@ export default function StudentBookingsPage() {
         }
     };
 
+    const handlePayInCash = async (bookingId: string) => {
+        if (!confirm('Confirm payment in cash? This will mark the bill as paid.')) return;
+
+        try {
+            await BookingService.markFinalBillPaidInCash(bookingId);
+            alert('Payment marked as completed!');
+            loadBookings();
+        } catch (error) {
+            console.error('Failed to mark payment as completed:', error);
+            alert('Failed to update payment status');
+        }
+    };
+
     const handleOpenRatingModal = (booking: Booking & { id: string }) => {
         setSelectedBooking(booking);
         setRatingModalOpen(true);
@@ -111,27 +125,51 @@ export default function StudentBookingsPage() {
         }
     };
 
-    const handleMessageProvider = async (tutorId: string) => {
+    const handleMessageProvider = async (tutorId: string, bookingId: string) => {
         if (!user) return;
 
         try {
-            const chatId = await ChatService.getOrCreateChat(user.uid, tutorId);
-            router.push(`/student/messages?chatId=${chatId}`);
+            // Check if chat exists first
+            const existingChatId = await ChatService.findChat(user.uid, tutorId, bookingId);
+
+            if (existingChatId) {
+                router.push(`/student/messages/detail?chatId=${existingChatId}`);
+            } else {
+                // Redirect with metadata to start a new chat LATER (on first message)
+                router.push(`/student/messages/detail?tutorId=${tutorId}&bookingId=${bookingId}`);
+            }
         } catch (error) {
             console.error('Failed to open chat:', error);
             alert('Failed to open chat');
         }
     };
 
-    const filteredBookings = bookings.filter((booking) => {
-        const bookingDate = booking.date.toDate();
+    const handleCallProvider = (phoneNumber: string) => {
+        window.location.href = `tel:${phoneNumber}`;
+    };
 
-        if (filter === 'upcoming') {
-            return booking.status !== 'cancelled' && booking.status !== 'completed' && (isFuture(bookingDate) || isToday(bookingDate));
-        } else if (filter === 'past') {
-            return booking.status === 'completed' || booking.status === 'cancelled' || (isPast(bookingDate) && !isToday(bookingDate));
+    const filteredBookings = bookings.filter((booking) => {
+        if (filter === 'all') return true;
+        return booking.status === filter;
+    }).sort((a, b) => {
+        // Helper to get timestamp from booking
+        const getTime = (booking: Booking) => {
+            const date = booking.date.toDate();
+            const [hours, minutes] = booking.startTime.split(':').map(Number);
+            date.setHours(hours, minutes, 0, 0);
+            return date.getTime();
+        };
+
+        const timeA = getTime(a);
+        const timeB = getTime(b);
+
+        // Sort order depends on filter
+        // For 'all', 'completed', 'cancelled': Descending (Most recent first)
+        // For 'pending', 'confirmed', 'in_progress': Ascending (Soonest first)
+        if (['all', 'completed', 'cancelled'].includes(filter)) {
+            return timeB - timeA;
         } else {
-            return booking.status === 'cancelled';
+            return timeA - timeB;
         }
     });
 
@@ -143,252 +181,280 @@ export default function StudentBookingsPage() {
         );
     }
 
+    const filters = [
+        { id: 'all', label: 'All' },
+        { id: 'pending', label: 'Pending' },
+        { id: 'confirmed', label: 'Confirmed' },
+        { id: 'in_progress', label: 'In Progress' },
+        { id: 'completed', label: 'Completed' },
+        { id: 'cancelled', label: 'Cancelled' },
+    ];
+
+
+
     return (
-        <div className="container mx-auto px-4 py-8">
-            <div className="mb-8">
-                <h1 className="text-3xl font-bold mb-2">My Bookings</h1>
-                <p className="text-muted-foreground">Manage your service bookings</p>
+        <div className="min-h-screen pb-20 bg-gray-50">
+            {/* Header - Teal Background */}
+            <div className="bg-[#005461] px-4 py-6 shadow-sm">
+                <h1 className="text-2xl font-bold text-white">My Bookings</h1>
+                <p className="text-white/80 text-sm mt-1">Manage your service requests</p>
             </div>
 
-            {/* Filter Tabs */}
-            <div className="flex gap-2 mb-6 border-b">
-                <button
-                    onClick={() => setFilter('upcoming')}
-                    className={`pb-3 px-4 border-b-2 transition-colors ${filter === 'upcoming'
-                        ? 'border-primary text-primary font-semibold'
-                        : 'border-transparent text-muted-foreground hover:text-foreground'
-                        }`}
-                >
-                    Upcoming ({bookings.filter(b => b.status !== 'cancelled' && b.status !== 'completed' && (isFuture(b.date.toDate()) || isToday(b.date.toDate()))).length})
-                </button>
-                <button
-                    onClick={() => setFilter('past')}
-                    className={`pb-3 px-4 border-b-2 transition-colors ${filter === 'past'
-                        ? 'border-primary text-primary font-semibold'
-                        : 'border-transparent text-muted-foreground hover:text-foreground'
-                        }`}
-                >
-                    Past ({bookings.filter(b => b.status === 'completed' || b.status === 'cancelled' || (isPast(b.date.toDate()) && !isToday(b.date.toDate()))).length})
-                </button>
-                <button
-                    onClick={() => setFilter('cancelled')}
-                    className={`pb-3 px-4 border-b-2 transition-colors ${filter === 'cancelled'
-                        ? 'border-primary text-primary font-semibold'
-                        : 'border-transparent text-muted-foreground hover:text-foreground'
-                        }`}
-                >
-                    Cancelled ({bookings.filter(b => b.status === 'cancelled').length})
-                </button>
-            </div>
-
-            {/* Bookings List */}
-            {loading ? (
-                <div className="flex justify-center py-12">
-                    <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+            <div className="w-full">
+                {/* Filter Tabs - Pill Style */}
+                <div className="sticky top-0 z-10 bg-white/95 backdrop-blur-sm border-b border-gray-100 py-3 mb-4">
+                    <div className="flex gap-3 overflow-x-auto px-4 scrollbar-hide">
+                        {filters.map((f) => (
+                            <button
+                                key={f.id}
+                                onClick={() => setFilter(f.id as any)}
+                                className={`flex-shrink-0 px-5 py-2 rounded-full text-sm font-medium transition-all duration-200 ${filter === f.id
+                                    ? 'bg-[#005461] text-white shadow-md'
+                                    : 'bg-gray-100 text-gray-600 border border-transparent hover:bg-gray-200'
+                                    }`}
+                            >
+                                {f.label}
+                                <span className={`ml-2 text-xs ${filter === f.id ? 'text-white/80' : 'text-gray-500'}`}>
+                                    {f.id === 'all' ? bookings.length : bookings.filter(b => b.status === f.id).length}
+                                </span>
+                            </button>
+                        ))}
+                    </div>
                 </div>
-            ) : filteredBookings.length === 0 ? (
-                <Card>
-                    <CardContent className="py-12 text-center">
-                        <p className="text-muted-foreground mb-4">
-                            {filter === 'upcoming' && 'No upcoming services'}
-                            {filter === 'past' && 'No past services'}
-                            {filter === 'cancelled' && 'No cancelled services'}
+
+                {/* Bookings List */}
+                {loading ? (
+                    <div className="flex flex-col items-center justify-center py-20">
+                        <div className="w-10 h-10 border-3 border-[#005461] border-t-transparent rounded-full animate-spin mb-4"></div>
+                        <p className="text-muted-foreground text-sm animate-pulse">Loading your bookings...</p>
+                    </div>
+                ) : filteredBookings.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-16 px-4 text-center">
+                        <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mb-6">
+                            <svg className="w-10 h-10 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" />
+                            </svg>
+                        </div>
+                        <h3 className="text-lg font-semibold text-gray-900 mb-2">No bookings found</h3>
+                        <p className="text-muted-foreground max-w-xs mx-auto mb-8">
+                            {filter === 'all'
+                                ? "You haven't made any bookings yet."
+                                : `You don't have any ${filter.replace('_', ' ')} bookings.`}
                         </p>
-                        <Link href="/search">
-                            <Button>
+                        <Link href="/search" className="w-full max-w-xs px-4">
+                            <Button className="w-full rounded-xl h-12 text-base bg-[#005461] hover:bg-[#003d47]">
                                 Find a Service Provider
                             </Button>
                         </Link>
-                    </CardContent>
-                </Card>
-            ) : (
-                <div className="space-y-4">
-                    {filteredBookings.map((booking) => (
-                        <Card key={booking.id}>
-                            <CardContent className="p-6">
-                                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-                                    <div className="flex-1">
-                                        <div className="flex items-center gap-3 mb-2">
-                                            <h3 className="text-xl font-semibold">
-                                                {booking.tutorName || 'Service Provider'}
-                                            </h3>
-                                            <Badge
-                                                variant={
-                                                    booking.status === 'confirmed' ? 'default' :
-                                                        booking.status === 'pending' ? 'outline' :
-                                                            booking.status === 'completed' ? 'default' :
-                                                                'outline'
-                                                }
-                                            >
-                                                {booking.status.charAt(0).toUpperCase() + booking.status.slice(1)}
-                                            </Badge>
-                                            <Badge variant={booking.paymentStatus === 'paid' ? 'default' : 'outline'}>
-                                                {booking.paymentStatus === 'paid' ? 'Paid' : 'Unpaid'}
-                                            </Badge>
+                    </div>
+                ) : (
+                    <div className="flex flex-col space-y-3 pb-8">
+                        {filteredBookings.map((booking) => (
+                            <div
+                                key={booking.id}
+                                onClick={() => router.push(`/student/booking-details?id=${booking.id}`)}
+                                className="bg-white p-4 shadow-sm border-b border-gray-100 hover:shadow-md transition-all duration-200 cursor-pointer"
+                            >
+                                {/* Card Header */}
+                                <div className="flex justify-between items-start mb-3">
+                                    <div>
+                                        <h3 className="font-bold text-lg text-gray-900 leading-tight mb-1">
+                                            {booking.tutorName || 'Service Provider'}
+                                        </h3>
+                                        <div className="flex items-center gap-2 text-sm text-gray-500">
+                                            <span>{booking.subject || 'General Service'}</span>
                                         </div>
-
-                                        <div className="space-y-1 text-sm">
-                                            <p className="text-muted-foreground">
-                                                📅 {format(booking.date.toDate(), 'EEEE, MMMM dd, yyyy')}
-                                            </p>
-                                            <p className="text-muted-foreground">
-                                                🕐 {booking.startTime} - {booking.endTime} ({booking.duration} minutes)
-                                            </p>
-                                            {booking.subject && (
-                                                <p className="text-muted-foreground">
-                                                    📚 Subject: {booking.subject}
-                                                </p>
-                                            )}
-                                            {booking.notes && (
-                                                <p className="text-muted-foreground">
-                                                    📝 {booking.notes}
-                                                </p>
-                                            )}
-                                        </div>
-
-                                        {/* Completion Code Display - When job is in progress */}
-                                        {booking.status === 'in_progress' && booking.completionCode && (
-                                            <div className="mt-4 p-4 border-2 border-primary rounded-lg bg-primary/5">
-                                                <div className="flex items-center justify-between mb-2">
-                                                    <h4 className="font-semibold text-sm">🔐 Job Completion Code</h4>
-                                                    {booking.codeExpiresAt && (
-                                                        <span className="text-xs text-muted-foreground">
-                                                            Expires: {format(booking.codeExpiresAt.toDate(), 'MMM dd, h:mm a')}
-                                                        </span>
-                                                    )}
-                                                </div>
-                                                <div className="text-4xl font-bold text-primary text-center my-3 tracking-widest font-mono">
-                                                    {booking.completionCode}
-                                                </div>
-                                                <p className="text-xs text-muted-foreground text-center mb-2">
-                                                    Share this code with the provider after they complete the work
-                                                </p>
-                                                <Button
-                                                    size="sm"
-                                                    variant="outline"
-                                                    className="w-full mt-2 text-xs"
-                                                    onClick={() => handleRegenerateCode(booking.id)}
-                                                    disabled={regeneratingCode === booking.id}
-                                                >
-                                                    {regeneratingCode === booking.id ? 'Generating...' : '🔄 Generate New Code'}
-                                                </Button>
-                                            </div>
-                                        )}
-
-                                        {/* Final Bill Display - When job is completed */}
-                                        {booking.status === 'completed' && booking.finalBillAmount && (
-                                            <div className="mt-4 p-4 border rounded-lg bg-blue-50 dark:bg-blue-950/30">
-                                                <h4 className="font-semibold text-sm mb-2">📄 Final Bill</h4>
-                                                <div className="text-3xl font-bold text-primary mb-2">
-                                                    ₹{booking.finalBillAmount}
-                                                </div>
-                                                {booking.billDetails && (
-                                                    <p className="text-sm text-muted-foreground whitespace-pre-line">
-                                                        {booking.billDetails}
-                                                    </p>
-                                                )}
-                                                {booking.billSubmittedAt && (
-                                                    <p className="text-xs text-muted-foreground mt-2">
-                                                        Bill submitted: {format(booking.billSubmittedAt.toDate(), 'MMM dd, h:mm a')}
-                                                    </p>
-                                                )}
-                                            </div>
-                                        )}
                                     </div>
+                                    <Badge
+                                        variant={
+                                            booking.status === 'confirmed' ? 'default' :
+                                                booking.status === 'pending' ? 'outline' :
+                                                    booking.status === 'completed' ? 'secondary' :
+                                                        'outline'
+                                        }
+                                        className={`capitalize px-3 py-1 rounded-full text-xs font-medium border-0 ${booking.status === 'confirmed' ? 'bg-green-100 text-green-700' :
+                                            booking.status === 'pending' ? 'bg-yellow-100 text-yellow-700' :
+                                                booking.status === 'completed' ? 'bg-gray-100 text-gray-700' :
+                                                    'bg-gray-100 text-gray-600'
+                                            }`}
+                                    >
+                                        {booking.status.replace('_', ' ')}
+                                    </Badge>
+                                </div>
 
-                                    <div className="flex flex-col items-end gap-2">
-                                        <div className="text-2xl font-bold text-primary">
-                                            {booking.status === 'completed' && booking.finalBillAmount
-                                                ? `₹${booking.finalBillAmount}`
-                                                : 'Visit: ₹99'}
-                                        </div>
-
-                                        {filter === 'upcoming' && booking.status !== 'cancelled' && (
-                                            <div className="flex gap-2">
-                                                {booking.status === 'pending' && (
-                                                    <Badge variant="outline" className="text-yellow-600">
-                                                        Waiting for provider to accept
-                                                    </Badge>
-                                                )}
-                                                {booking.status === 'in_progress' && (
-                                                    <Badge variant="default" className="bg-blue-600">
-                                                        🚀 Work in Progress
-                                                    </Badge>
-                                                )}
-                                            </div>
-                                        )}
-
-                                        {/* Payment Section - After job completion */}
-                                        {booking.status === 'completed' && booking.finalBillAmount && (
-                                            <div className="flex flex-col gap-2 items-end">
-                                                {booking.finalPaymentStatus === 'pending' && (
-                                                    <RazorpayPayment
-                                                        amount={booking.finalBillAmount}
-                                                        bookingId={booking.id}
-                                                        isFinalPayment={true}
-                                                        onSuccess={() => {
-                                                            alert('Payment successful!');
-                                                            loadBookings();
-                                                        }}
-                                                        onFailure={(error) => {
-                                                            alert(`Payment failed: ${error}`);
-                                                        }}
-                                                    />
-                                                )}
-
-                                                {booking.finalPaymentStatus === 'completed' && booking.paidAt && (
-                                                    <Badge variant="default" className="bg-green-600">
-                                                        ✓ Paid on {format(booking.paidAt.toDate(), 'MMM dd')}
-                                                    </Badge>
-                                                )}
-                                            </div>
-                                        )}
-
-                                        {/* Message Provider Button - for confirmed and in-progress bookings */}
-                                        {(booking.status === 'confirmed' || booking.status === 'in_progress') && (
-                                            <Button
-                                                size="sm"
-                                                variant="outline"
-                                                onClick={() => handleMessageProvider(booking.tutorId)}
-                                            >
-                                                💬 Message Provider
-                                            </Button>
-                                        )}
-
-                                        {/* Rate Service Button/Badge - for completed bookings */}
-                                        {filter === 'past' && booking.status === 'completed' && (
-                                            booking.rated ? (
-                                                <Badge variant="default" className="bg-yellow-500">
-                                                    ⭐ Rated
-                                                </Badge>
-                                            ) : (
-                                                <Button
-                                                    size="sm"
-                                                    variant="outline"
-                                                    onClick={() => handleOpenRatingModal(booking)}
-                                                >
-                                                    ⭐ Rate Service
-                                                </Button>
-                                            )
-                                        )}
+                                {/* Date & Time */}
+                                <div className="flex items-center gap-3 mb-4">
+                                    <div className="w-12 h-12 rounded-xl bg-[#f0f9fa] flex flex-col items-center justify-center text-[#005461]">
+                                        <span className="text-[10px] uppercase font-bold">
+                                            {format(booking.date.toDate(), 'MMM')}
+                                        </span>
+                                        <span className="text-xl font-bold leading-none">
+                                            {format(booking.date.toDate(), 'dd')}
+                                        </span>
+                                    </div>
+                                    <div>
+                                        <p className="font-semibold text-gray-900">
+                                            {format(booking.date.toDate(), 'EEEE')}
+                                        </p>
+                                        <p className="text-sm text-gray-500">
+                                            {booking.startTime}
+                                        </p>
                                     </div>
                                 </div>
-                            </CardContent>
-                        </Card>
-                    ))}
-                </div>
-            )}
 
-            {/* Rating Modal */}
-            <RatingModal
-                isOpen={ratingModalOpen}
-                onClose={() => {
-                    setRatingModalOpen(false);
-                    setSelectedBooking(null);
-                }}
-                onSubmit={handleSubmitRating}
-                tutorName={selectedBooking?.tutorName || 'Service Provider'}
-            />
+                                {/* Action Cards (Codes) */}
+                                {booking.status === 'confirmed' && booking.startCode && (
+                                    <div className="mb-4 p-4 rounded-xl bg-[#f0fdf4] border border-green-100">
+                                        <div className="flex justify-between items-center mb-2">
+                                            <span className="text-xs font-bold uppercase tracking-wider text-green-800">Start Code</span>
+                                            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                                        </div>
+                                        <div className="flex items-baseline gap-3">
+                                            <span className="text-3xl font-mono font-bold text-green-700 tracking-widest">
+                                                {booking.startCode}
+                                            </span>
+                                            <span className="text-xs text-green-600 leading-tight">
+                                                Share with provider<br />upon arrival
+                                            </span>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {booking.status === 'in_progress' && booking.completionCode && (
+                                    <div className="mb-4 p-4 rounded-xl bg-[#eff6ff] border border-blue-100">
+                                        <div className="flex justify-between items-center mb-2">
+                                            <span className="text-xs font-bold uppercase tracking-wider text-blue-800">Completion Code</span>
+                                            {booking.codeExpiresAt && (
+                                                <span className="text-[10px] text-blue-600 bg-white/50 px-2 py-0.5 rounded-full">
+                                                    Expires {format(booking.codeExpiresAt.toDate(), 'h:mm a')}
+                                                </span>
+                                            )}
+                                        </div>
+                                        <div className="text-3xl font-mono font-bold text-blue-700 tracking-widest mb-2">
+                                            {booking.completionCode}
+                                        </div>
+                                        <div className="flex items-center justify-between gap-4">
+                                            <span className="text-xs text-blue-600">
+                                                Share after work is done
+                                            </span>
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleRegenerateCode(booking.id);
+                                                }}
+                                                disabled={regeneratingCode === booking.id}
+                                                className="text-xs font-medium text-blue-700 hover:text-blue-800 underline disabled:opacity-50"
+                                            >
+                                                {regeneratingCode === booking.id ? 'Generating...' : 'Regenerate'}
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Bill & Payment */}
+                                {booking.status === 'completed' && booking.finalBillAmount && (
+                                    <div className="mb-4 p-4 rounded-xl bg-gray-50 border border-gray-100">
+                                        <div className="flex justify-between items-center mb-3">
+                                            <span className="text-sm font-medium text-gray-700">Total Bill</span>
+                                            <span className="text-xl font-bold text-gray-900">₹{booking.finalBillAmount}</span>
+                                        </div>
+
+                                        {booking.finalPaymentStatus === 'pending' ? (
+                                            <div className="space-y-3">
+                                                <div className="flex items-center gap-2 text-xs text-yellow-700 bg-yellow-50 p-2 rounded-lg">
+                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                                                    Payment Pending
+                                                </div>
+                                                <Button
+                                                    className="w-full bg-green-600 hover:bg-green-700 text-white"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handlePayInCash(booking.id);
+                                                    }}
+                                                >
+                                                    Pay in Cash
+                                                </Button>
+                                            </div>
+                                        ) : (
+                                            <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 p-2 rounded-lg">
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                                                Paid via {booking.paymentMethod === 'cash' ? 'Cash' : 'Online'} on {booking.paidAt ? format(booking.paidAt.toDate(), 'MMM dd') : 'Unknown date'}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* Footer Actions */}
+                                <div className="flex items-center gap-3 pt-2 border-t border-gray-50">
+                                    {(booking.status === 'confirmed' || booking.status === 'in_progress') && (
+                                        <>
+                                            <Button
+                                                variant="outline"
+                                                className="flex-1 h-10 rounded-xl text-sm border-gray-200 hover:bg-gray-50 hover:text-gray-900"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleMessageProvider(booking.tutorId, booking.id);
+                                                }}
+                                            >
+                                                <span className="mr-2">💬</span> Message
+                                            </Button>
+                                            {booking.tutorPhoneNumber && (
+                                                <Button
+                                                    variant="outline"
+                                                    className="flex-1 h-10 rounded-xl text-sm border-gray-200 hover:bg-gray-50 hover:text-gray-900"
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        handleCallProvider(booking.tutorPhoneNumber!);
+                                                    }}
+                                                >
+                                                    <span className="mr-2">📞</span> Call
+                                                </Button>
+                                            )}
+                                        </>
+                                    )}
+
+                                    {booking.status === 'completed' && !booking.rated && (
+                                        <Button
+                                            variant="outline"
+                                            className="flex-1 h-10 rounded-xl text-sm border-yellow-200 text-yellow-700 hover:bg-yellow-50"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleOpenRatingModal(booking);
+                                            }}
+                                        >
+                                            <span className="mr-2">⭐</span> Rate Service
+                                        </Button>
+                                    )}
+
+                                    {booking.status === 'pending' && (
+                                        <Button
+                                            variant="ghost"
+                                            className="flex-1 h-10 rounded-xl text-sm text-red-600 hover:bg-red-50 hover:text-red-700"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleCancelBooking(booking.id);
+                                            }}
+                                        >
+                                            Cancel Request
+                                        </Button>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {/* Rating Modal */}
+                <RatingModal
+                    isOpen={ratingModalOpen}
+                    onClose={() => {
+                        setRatingModalOpen(false);
+                        setSelectedBooking(null);
+                    }}
+                    onSubmit={handleSubmitRating}
+                    tutorName={selectedBooking?.tutorName || 'Service Provider'}
+                />
+            </div>
         </div>
     );
 }

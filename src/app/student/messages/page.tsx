@@ -2,7 +2,7 @@
 
 import { useState, useEffect, Suspense } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/Card';
 import { Badge } from '@/components/Badge';
 import { Button } from '@/components/Button';
@@ -19,6 +19,7 @@ interface ChatWithDetails extends Chat {
 
 function MessagesPageContent() {
     const { user } = useAuth();
+    const router = useRouter();
     const searchParams = useSearchParams();
     const chatIdFromUrl = searchParams.get('chatId');
 
@@ -40,14 +41,16 @@ function MessagesPageContent() {
                     if (otherUserId) {
                         try {
                             const otherUser = await UserService.getUserById(otherUserId);
+                            if (!otherUser) return chat; // Handle null user
+
                             return {
                                 ...chat,
-                                otherUserName: otherUser.tutorProfile
+                                otherUserName: otherUser?.tutorProfile
                                     ? `${otherUser.tutorProfile.firstName} ${otherUser.tutorProfile.lastName}`
-                                    : otherUser.studentProfile
+                                    : otherUser?.studentProfile
                                         ? `${otherUser.studentProfile.firstName} ${otherUser.studentProfile.lastName}`
                                         : 'Unknown User',
-                                otherUserLocation: otherUser.tutorProfile
+                                otherUserLocation: otherUser?.tutorProfile
                                     ? `${otherUser.tutorProfile.city}, ${otherUser.tutorProfile.area}`
                                     : undefined,
                             };
@@ -114,123 +117,75 @@ function MessagesPageContent() {
     }
 
     return (
-        <div className="container mx-auto px-4 py-8">
-            <div className="grid lg:grid-cols-3 gap-6 h-[calc(100vh-8rem)]">
-                {/* Conversations List */}
-                <Card className="lg:col-span-1">
-                    <CardHeader>
-                        <h2 className="text-xl font-bold">Conversations</h2>
-                    </CardHeader>
-                    <CardContent>
-                        {loading ? (
-                            <p className="text-center text-muted-foreground py-8">Loading...</p>
-                        ) : chats.length === 0 ? (
-                            <p className="text-center text-muted-foreground py-8">
-                                No conversations yet
-                            </p>
-                        ) : (
-                            <div className="space-y-2">
-                                {chats.map((chat) => (
-                                    <div
-                                        key={chat.id}
-                                        onClick={() => setSelectedChatId(chat.id)}
-                                        className={`p-4 rounded-md cursor-pointer transition-colors ${selectedChatId === chat.id
-                                            ? 'bg-primary/10 border-l-4 border-primary'
-                                            : 'hover:bg-muted'
-                                            }`}
-                                    >
-                                        <div className="flex items-center justify-between mb-1">
-                                            <span className="font-semibold">{chat.otherUserName || 'Unknown'}</span>
-                                            {chat.unreadCount && chat.unreadCount[user.uid] > 0 && (
-                                                <Badge variant="default" className="ml-2">
-                                                    {chat.unreadCount[user.uid]}
-                                                </Badge>
-                                            )}
-                                        </div>
-                                        {chat.otherUserLocation && (
-                                            <p className="text-xs text-muted-foreground mb-1">
-                                                📍 {chat.otherUserLocation}
-                                            </p>
-                                        )}
-                                        <p className="text-sm text-muted-foreground truncate">
-                                            {chat.lastMessage || 'No messages yet'}
-                                        </p>
+        <div className="min-h-screen bg-white pb-20">
+            {/* Header - Teal Background matched with My Bookings */}
+            <div className="bg-[#005461] px-4 py-6 shadow-sm">
+                <h1 className="text-2xl font-bold text-white">Messages</h1>
+                <p className="text-white/80 text-sm mt-1">Manage your conversations</p>
+            </div>
+
+            {/* Content */}
+            <div className="container mx-auto px-0">
+                {loading ? (
+                    <div className="flex justify-center py-12">
+                        <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin"></div>
+                    </div>
+                ) : chats.length === 0 ? (
+                    <div className="text-center py-12 px-4">
+                        <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-4">
+                            <span className="text-2xl">💬</span>
+                        </div>
+                        <h3 className="text-lg font-semibold text-gray-900">No messages yet</h3>
+                        <p className="text-muted-foreground mt-1">Start a conversation with a service provider!</p>
+                    </div>
+                ) : (
+                    <div className="divide-y divide-gray-50">
+                        {chats.map((chat) => (
+                            <div
+                                key={chat.id}
+                                className="flex items-center gap-4 p-4 hover:bg-gray-50 active:bg-gray-100 transition-colors cursor-pointer"
+                                onClick={() => router.push(`/student/messages/detail?chatId=${chat.id}`)}
+                            >
+                                {/* Avatar */}
+                                <div className="relative">
+                                    <div className="w-12 h-12 rounded-full bg-orange-100 flex items-center justify-center text-orange-600 font-bold text-lg">
+                                        {chat.otherUserName?.[0] || '?'}
+                                    </div>
+                                    {/* Online Indicator (Optional - could be added if data exists) */}
+                                </div>
+
+                                {/* Content */}
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex justify-between items-baseline mb-1">
+                                        <h3 className="font-semibold text-gray-900 truncate pr-2">
+                                            {chat.otherUserName || 'Unknown User'}
+                                        </h3>
                                         {chat.lastMessageTime && (
-                                            <p className="text-xs text-muted-foreground mt-1">
-                                                {format(chat.lastMessageTime.toDate(), 'MMM dd, h:mm a')}
-                                            </p>
+                                            <span className="text-xs text-gray-400 whitespace-nowrap">
+                                                {format(chat.lastMessageTime.toDate(), 'h:mm a')}
+                                            </span>
                                         )}
                                     </div>
-                                ))}
-                            </div>
-                        )}
-                    </CardContent>
-                </Card>
-
-                {/* Chat Area */}
-                <Card className="lg:col-span-2">
-                    <CardContent className="p-6 flex flex-col h-full">
-                        {selectedChat ? (
-                            <>
-                                {/* Chat Header */}
-                                <div className="pb-4 border-b mb-4">
-                                    <h3 className="font-bold text-lg">{selectedChat.otherUserName}</h3>
-                                    {selectedChat.otherUserLocation && (
-                                        <p className="text-sm text-muted-foreground">
-                                            📍 {selectedChat.otherUserLocation}
+                                    <div className="flex justify-between items-center">
+                                        <p className={`text-sm truncate pr-2 ${chat.unreadCount?.[user.uid] > 0 ? 'text-gray-900 font-medium' : 'text-gray-500'}`}>
+                                            {chat.lastMessage || 'No messages yet'}
+                                        </p>
+                                        {chat.unreadCount && chat.unreadCount[user.uid] > 0 && (
+                                            <span className="flex items-center justify-center w-5 h-5 rounded-full bg-red-600 text-white text-[10px] font-bold shrink-0">
+                                                {chat.unreadCount[user.uid]}
+                                            </span>
+                                        )}
+                                    </div>
+                                    {chat.otherUserLocation && (
+                                        <p className="text-xs text-gray-400 mt-0.5 flex items-center gap-1">
+                                            <span className="text-[10px]">📍</span> {chat.otherUserLocation}
                                         </p>
                                     )}
                                 </div>
-
-                                {/* Messages */}
-                                <div className="flex-1 overflow-y-auto mb-4 space-y-4">
-                                    {messages.map((msg) => (
-                                        <div
-                                            key={msg.id}
-                                            className={`flex ${msg.senderId === user.uid ? 'justify-end' : 'justify-start'}`}
-                                        >
-                                            <div
-                                                className={`max-w-[70%] rounded-lg px-4 py-2 ${msg.senderId === user.uid
-                                                    ? 'bg-primary text-primary-foreground'
-                                                    : 'bg-muted'
-                                                    }`}
-                                            >
-                                                <p className="text-sm">{msg.text}</p>
-                                                {msg.timestamp && (
-                                                    <p className={`text-xs mt-1 ${msg.senderId === user.uid
-                                                        ? 'text-primary-foreground/70'
-                                                        : 'text-muted-foreground'
-                                                        }`}>
-                                                        {format(msg.timestamp.toDate(), 'h:mm a')}
-                                                    </p>
-                                                )}
-                                            </div>
-                                        </div>
-                                    ))}
-                                </div>
-
-                                {/* Message Input */}
-                                <div className="flex gap-2">
-                                    <input
-                                        type="text"
-                                        value={messageText}
-                                        onChange={(e) => setMessageText(e.target.value)}
-                                        placeholder="Type a message..."
-                                        className="flex-1 p-3 rounded-md border border-input bg-background"
-                                        onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                                    />
-                                    <Button onClick={handleSendMessage} disabled={!messageText.trim()}>
-                                        Send
-                                    </Button>
-                                </div>
-                            </>
-                        ) : (
-                            <div className="flex-1 flex items-center justify-center text-muted-foreground">
-                                Select a conversation to start messaging
                             </div>
-                        )}
-                    </CardContent>
-                </Card>
+                        ))}
+                    </div>
+                )}
             </div>
         </div>
     );

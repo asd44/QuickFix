@@ -3,15 +3,15 @@ import { CapacitorConfig } from '@capacitor/cli';
 const config: CapacitorConfig = {
   appId: 'com.quickfix.app',
   appName: 'QuickFix',
-  webDir: '.next', // Not used in server mode
-  server: {
-    url: 'https://quick-fix-tau.vercel.app', // Your Vercel deployment URL
-    cleartext: true,
-    androidScheme: 'https'
-  },
+  webDir: 'out',
+  bundledWebRuntime: false,
+  // server: {
+  //   url: 'http://10.0.2.2:3000', // Use this only for local dev with live reload
+  //   cleartext: true
+  // },
   plugins: {
     SplashScreen: {
-      launchShowDuration: 2000,
+      launchShowDuration: 300,
       backgroundColor: "#FF5722",
       showSpinner: false
     }

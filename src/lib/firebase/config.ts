@@ -3,6 +3,7 @@ import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
 import { getAuth, Auth } from 'firebase/auth';
 import { getFirestore, Firestore } from 'firebase/firestore';
 import { getStorage, FirebaseStorage } from 'firebase/storage';
+import { getMessaging, Messaging } from 'firebase/messaging';
 
 const firebaseConfig = {
     apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -19,17 +20,35 @@ let app: FirebaseApp;
 let auth: Auth;
 let db: Firestore;
 let storage: FirebaseStorage;
+let messaging: Messaging | undefined;
 
 if (!getApps().length) {
     app = initializeApp(firebaseConfig);
     auth = getAuth(app);
     db = getFirestore(app);
     storage = getStorage(app);
+
+    // Messaging is only supported in browser environments
+    if (typeof window !== 'undefined') {
+        try {
+            messaging = getMessaging(app);
+        } catch (e) {
+            console.warn('Firebase Messaging failed to initialize', e);
+        }
+    }
 } else {
     app = getApps()[0];
     auth = getAuth(app);
     db = getFirestore(app);
     storage = getStorage(app);
+
+    if (typeof window !== 'undefined') {
+        try {
+            messaging = getMessaging(app);
+        } catch (e) {
+            console.warn('Firebase Messaging failed to initialize', e);
+        }
+    }
 }
 
-export { app, auth, db, storage };
+export { app, auth, db, storage, messaging };

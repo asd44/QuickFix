@@ -164,11 +164,11 @@ export class SubscriptionService {
                 const endDate = doc.data().endDate?.toDate();
                 return endDate && endDate < now;
             })
-            .map(async (doc) => {
-                await updateDoc(doc.ref, { status: 'expired' });
+            .map(async (subscriptionDoc) => {
+                await updateDoc(subscriptionDoc.ref, { status: 'expired' });
 
                 // Update tutor profile
-                const tutorId = doc.data().tutorId;
+                const tutorId = subscriptionDoc.data().tutorId;
                 await updateDoc(doc(db, 'users', tutorId), {
                     'tutorProfile.subscription.status': 'expired',
                 });

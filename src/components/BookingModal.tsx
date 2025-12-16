@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { format, addMinutes } from 'date-fns';
 import { DayPicker } from 'react-day-picker';
 import 'react-day-picker/dist/style.css';
@@ -14,6 +14,8 @@ interface BookingModalProps {
     onClose: () => void;
     onBook: (bookingData: BookingData) => Promise<void>;
 }
+
+import { BookingService } from '@/lib/services/booking.service';
 
 export interface BookingData {
     date: Date;
@@ -36,28 +38,43 @@ const TIME_SLOTS = [
     '18:00', '18:30', '19:00', '19:30', '20:00', '20:30',
 ];
 
-export function BookingModal({ tutorId, tutorName, hourlyRate, onClose, onBook }: BookingModalProps) {
-    console.log('BookingModal opened with hourlyRate:', hourlyRate);
-
+export function BookingModal({ tutorId, tutorName, onClose, onBook }: Omit<BookingModalProps, 'hourlyRate'>) {
     const [selectedDate, setSelectedDate] = useState<Date>();
     const [selectedTime, setSelectedTime] = useState<string>('');
-    const [duration, setDuration] = useState<number>(60);
     const [notes, setNotes] = useState('');
     const [loading, setLoading] = useState(false);
+    const [bookedSlots, setBookedSlots] = useState<string[]>([]);
+    const VISITING_CHARGE = 99;
 
-    const calculatePrice = () => {
-        const price = ((duration / 60) * hourlyRate).toFixed(2);
-        console.log('Calculating price:', { duration, hourlyRate, price });
-        return price;
-    };
+    // Fetch booked slots when date changes
+    useEffect(() => {
+        if (selectedDate && tutorId) {
+            setLoading(true); // Re-use loading or create separate loading state if needed
+            BookingService.getBookedSlots(tutorId, selectedDate)
+                .then(slots => {
+                    setBookedSlots(slots);
+                })
+                .catch(err => {
+                    console.error("Failed to fetch booked slots", err);
+                })
+                .finally(() => {
+                    setLoading(false);
+                });
+        } else {
+            setBookedSlots([]);
+        }
+    }, [selectedDate, tutorId]);
 
-    const calculateEndTime = (startTime: string, durationMinutes: number) => {
+    const calculateEndTime = (startTime: string) => {
         const [hours, minutes] = startTime.split(':').map(Number);
         const start = new Date();
         start.setHours(hours, minutes, 0, 0);
-        const end = addMinutes(start, durationMinutes);
+        // Default inspection duration is 60 mins for scheduling purposes
+        const end = addMinutes(start, 60);
         return format(end, 'HH:mm');
     };
+
+    const isSubmittingRef = useRef(false);
 
     const handleBookSession = async () => {
         if (!selectedDate || !selectedTime) {
@@ -65,26 +82,31 @@ export function BookingModal({ tutorId, tutorName, hourlyRate, onClose, onBook }
             return;
         }
 
+        // Synchronous check to prevent double submission
+        if (isSubmittingRef.current) return;
+        isSubmittingRef.current = true;
+
         setLoading(true);
         try {
-            // Create booking first
             await onBook({
                 date: selectedDate,
                 startTime: selectedTime,
-                duration,
+                duration: 60, // Default 1 hour slot for inspection
                 notes,
             });
 
-            // Show success message - booking created but payment pending
-            alert('Booking created! Please complete payment to confirm.');
-            setLoading(false);
-
-            // Note: Payment will be handled from the student bookings page
-            // Or we can proceed to payment right here
-        } catch (error) {
+            // Success is handled by the parent component closing the modal
+        } catch (error: any) {
             console.error('Booking failed:', error);
-            alert('Failed to create booking. Please try again.');
+            // Error is already alerted by parent, but we can set a local error state if we want better UI
+            // Reset ref on error so user can try again
+            isSubmittingRef.current = false;
+        } finally {
             setLoading(false);
+            // Note: We don't reset isSubmittingRef.current = false here on success 
+            // because the modal will close. If it doesn't close on success, we would need to reset it.
+            // But usually on success we unmount or redirect. 
+            // In case of error it is reset in catch.
         }
     };
 
@@ -92,11 +114,11 @@ export function BookingModal({ tutorId, tutorName, hourlyRate, onClose, onBook }
     const disabledDays = { before: new Date() };
 
     return (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <Card className="w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[9999] p-4 pb-20 sm:pb-4">
+            <Card className="w-full max-w-2xl max-h-[75vh] sm:max-h-[90vh] overflow-y-auto shadow-xl">
                 <CardHeader className="border-b sticky top-0 bg-background z-10">
                     <div className="flex items-center justify-between">
-                        <CardTitle>Book Session with {tutorName}</CardTitle>
+                        <CardTitle>Book Service with {tutorName}</CardTitle>
                         <button
                             onClick={onClose}
                             className="text-2xl hover:text-primary transition-colors"
@@ -122,42 +144,35 @@ export function BookingModal({ tutorId, tutorName, hourlyRate, onClose, onBook }
                         </div>
                     </div>
 
-                    {/* Duration Selection */}
-                    <div>
-                        <h3 className="font-semibold mb-3">Session Duration</h3>
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                            {DURATION_OPTIONS.map((option) => (
-                                <button
-                                    key={option.value}
-                                    onClick={() => setDuration(option.value)}
-                                    className={`p-3 rounded-md border-2 transition-colors ${duration === option.value
-                                        ? 'border-primary bg-primary/10'
-                                        : 'border-border hover:border-primary/50'
-                                        }`}
-                                >
-                                    <div className="font-semibold">{option.label}</div>
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-
                     {/* Time Slots */}
                     {selectedDate && (
                         <div>
                             <h3 className="font-semibold mb-3">Select Time</h3>
                             <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-48 overflow-y-auto">
-                                {TIME_SLOTS.map((time) => (
-                                    <button
-                                        key={time}
-                                        onClick={() => setSelectedTime(time)}
-                                        className={`p-2 rounded-md border-2 transition-colors text-sm ${selectedTime === time
-                                            ? 'border-primary bg-primary/10'
-                                            : 'border-border hover:border-primary/50'
-                                            }`}
-                                    >
-                                        {time}
-                                    </button>
-                                ))}
+                                {TIME_SLOTS.map((time) => {
+                                    const isBooked = bookedSlots.includes(time);
+                                    let slotClass = "p-2 rounded-md border-2 transition-colors text-sm relative ";
+
+                                    if (selectedTime === time) {
+                                        slotClass += "border-primary bg-primary/10 text-primary font-semibold";
+                                    } else if (isBooked) {
+                                        slotClass += "border-red-200 bg-red-50 text-red-400 cursor-not-allowed decoration-slice";
+                                    } else {
+                                        slotClass += "border-green-200 bg-green-50 text-green-700 hover:border-green-400 hover:bg-green-100";
+                                    }
+
+                                    return (
+                                        <button
+                                            key={time}
+                                            onClick={() => setSelectedTime(time)}
+                                            disabled={isBooked}
+                                            className={slotClass}
+                                            title={isBooked ? 'Slot already booked' : 'Available slot'}
+                                        >
+                                            <span className={isBooked ? 'line-through' : ''}>{time}</span>
+                                        </button>
+                                    );
+                                })}
                             </div>
                         </div>
                     )}
@@ -165,7 +180,7 @@ export function BookingModal({ tutorId, tutorName, hourlyRate, onClose, onBook }
                     {/* Session Summary */}
                     {selectedDate && selectedTime && (
                         <div className="bg-muted p-4 rounded-md space-y-2">
-                            <h3 className="font-semibold mb-2">Session Summary</h3>
+                            <h3 className="font-semibold mb-2">Service Summary</h3>
                             <div className="text-sm space-y-1">
                                 <p>
                                     <span className="text-muted-foreground">Date:</span>{' '}
@@ -174,17 +189,16 @@ export function BookingModal({ tutorId, tutorName, hourlyRate, onClose, onBook }
                                 <p>
                                     <span className="text-muted-foreground">Time:</span>{' '}
                                     <span className="font-semibold">
-                                        {selectedTime} - {calculateEndTime(selectedTime, duration)}
+                                        {selectedTime}
                                     </span>
-                                </p>
-                                <p>
-                                    <span className="text-muted-foreground">Duration:</span>{' '}
-                                    <span className="font-semibold">{duration} minutes</span>
                                 </p>
                                 <div className="pt-2 border-t border-border mt-2">
                                     <p className="text-lg">
-                                        <span className="text-muted-foreground">Total Price:</span>{' '}
-                                        <span className="font-bold text-primary">${calculatePrice()}</span>
+                                        <span className="text-muted-foreground">Visiting Charge:</span>{' '}
+                                        <span className="font-bold text-primary">₹{VISITING_CHARGE}</span>
+                                    </p>
+                                    <p className="text-xs text-muted-foreground mt-1">
+                                        * Final service cost will be quoted after inspection.
                                     </p>
                                 </div>
                             </div>
@@ -193,11 +207,11 @@ export function BookingModal({ tutorId, tutorName, hourlyRate, onClose, onBook }
 
                     {/* Notes */}
                     <div>
-                        <h3 className="font-semibold mb-3">Additional Notes (Optional)</h3>
+                        <h3 className="font-semibold mb-3">Description of Issue (Optional)</h3>
                         <textarea
                             value={notes}
                             onChange={(e) => setNotes(e.target.value)}
-                            placeholder="Topics to cover, specific questions, etc..."
+                            placeholder="Describe the problem or service needed..."
                             className="w-full p-3 border rounded-md min-h-[100px] resize-none"
                             maxLength={500}
                         />
@@ -214,7 +228,7 @@ export function BookingModal({ tutorId, tutorName, hourlyRate, onClose, onBook }
                             className="flex-1"
                             disabled={!selectedDate || !selectedTime || loading}
                         >
-                            {loading ? 'Processing...' : `Book Session - $${calculatePrice()}`}
+                            {loading ? 'Processing...' : 'Book Service'}
                         </Button>
                     </div>
                 </CardContent>

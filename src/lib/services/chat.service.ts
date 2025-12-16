@@ -19,25 +19,39 @@ import { Chat, Message } from '@/lib/types/database';
 
 export class ChatService {
     // Get or create chat between student and tutor
-    static async getOrCreateChat(studentId: string, tutorId: string): Promise<string> {
-        // Check if chat already exists
-        const q = query(
-            collection(db, 'chats'),
-            where('participants', 'array-contains', studentId)
-        );
+    // Find existing chat without creating
+    static async findChat(studentId: string, tutorId: string, bookingId?: string): Promise<string | null> {
+        let q;
 
-        const querySnapshot = await getDocs(q);
-        const existingChat = querySnapshot.docs.find(doc => {
-            const data = doc.data();
-            return data.participants.includes(tutorId);
-        });
-
-        if (existingChat) {
-            return existingChat.id;
+        if (bookingId) {
+            q = query(
+                collection(db, 'chats'),
+                where('bookingId', '==', bookingId)
+            );
+        } else {
+            q = query(
+                collection(db, 'chats'),
+                where('participants', 'array-contains', studentId)
+            );
         }
 
-        // Create new chat
-        const chatData: Omit<Chat, 'id'> = {
+        const querySnapshot = await getDocs(q);
+
+        const existingChat = querySnapshot.docs.find(doc => {
+            const data = doc.data();
+            const correctParticipants = data.participants.includes(tutorId) && data.participants.includes(studentId);
+            if (!bookingId) {
+                return correctParticipants && !data.bookingId;
+            }
+            return correctParticipants;
+        });
+
+        return existingChat ? existingChat.id : null;
+    }
+
+    // Create a new chat
+    static async createChat(studentId: string, tutorId: string, bookingId?: string): Promise<string> {
+        const chatData: any = {
             participants: [studentId, tutorId],
             lastMessage: '',
             lastMessageTime: serverTimestamp() as Timestamp,
@@ -47,8 +61,19 @@ export class ChatService {
             },
         };
 
+        if (bookingId) {
+            chatData.bookingId = bookingId;
+        }
+
         const chatRef = await addDoc(collection(db, 'chats'), chatData);
         return chatRef.id;
+    }
+
+    // Get or create chat (Legacy wrapper)
+    static async getOrCreateChat(studentId: string, tutorId: string, bookingId?: string): Promise<string> {
+        const existingId = await this.findChat(studentId, tutorId, bookingId);
+        if (existingId) return existingId;
+        return this.createChat(studentId, tutorId, bookingId);
     }
 
     // Get user's chats (real-time listener)
@@ -124,11 +149,11 @@ export class ChatService {
                         // Show notification (browser-side only for now)
                         if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
                             const { NotificationService } = await import('./notification.service');
-                            NotificationService.showNotification(
+                            await NotificationService.sendNotification(
+                                otherUserId,
                                 `New message from ${senderName}`,
                                 text.substring(0, 100),
-                                undefined,
-                                '/messages'
+                                { clickAction: '/messages' }
                             );
                         }
                     }

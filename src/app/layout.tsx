@@ -1,20 +1,49 @@
 import { Inter } from "next/font/google";
 import "./globals.css";
-import { MobileSidebar } from '@/components/MobileSidebar';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { NotificationPrompt } from '@/components/NotificationPrompt';
 import { ServiceWorkerRegistration } from '@/components/ServiceWorkerRegistration';
+
+import { BottomNav } from '@/components/BottomNav';
+import { AuthGuard } from '@/components/AuthGuard';
 
 const inter = Inter({
   subsets: ["latin"],
   variable: "--font-inter",
 });
 
-export const metadata = {
+import type { Metadata, Viewport } from 'next';
+
+export const metadata: Metadata = {
   title: "QuickFix - Home Services Marketplace",
   description: "Get trusted home services at your doorstep",
+  manifest: "/manifest.json",
+  icons: {
+    icon: [
+      { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/icon-512.png', sizes: '512x512', type: 'image/png' },
+    ],
+    apple: [
+      { url: '/icon-192.png' },
+    ],
+  },
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: 'QuickFix',
+  },
+  other: {
+    'mobile-web-app-capable': 'yes',
+  },
 };
 
+export const viewport: Viewport = {
+  themeColor: '#FF5722',
+};
+
+import { BackButtonHandler } from '@/components/BackButtonHandler';
+
+// Force rebuild
 export default function RootLayout({
   children,
 }: {
@@ -22,25 +51,18 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en" className={inter.variable}>
-      <head>
-        <link rel="manifest" href="/manifest.json" />
-        <meta name="theme-color" content="#FF5722" />
-        <meta name="mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-capable" content="yes" />
-        <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-        <meta name="apple-mobile-web-app-title" content="QuickFix" />
-        <link rel="apple-touch-icon" href="/icon-192.png" />
-        <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
-        <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png" />
-      </head>
       <body>
         <ServiceWorkerRegistration />
         <AuthProvider>
-          <NotificationPrompt />
-          <MobileSidebar />
-          <main>
-            {children}
-          </main>
+          <BackButtonHandler />
+          <AuthGuard>
+
+            <NotificationPrompt />
+            <main>
+              {children}
+            </main>
+            <BottomNav />
+          </AuthGuard>
         </AuthProvider>
       </body>
     </html>

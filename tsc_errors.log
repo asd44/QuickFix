@@ -1,0 +1,15 @@
+src/app/student/messages/page.tsx(45,48): error TS18047: 'otherUser' is possibly 'null'.
+src/app/student/messages/page.tsx(46,42): error TS18047: 'otherUser' is possibly 'null'.
+src/app/student/messages/page.tsx(46,78): error TS18047: 'otherUser' is possibly 'null'.
+src/app/student/messages/page.tsx(47,39): error TS18047: 'otherUser' is possibly 'null'.
+src/app/student/messages/page.tsx(48,46): error TS18047: 'otherUser' is possibly 'null'.
+src/app/student/messages/page.tsx(48,84): error TS18047: 'otherUser' is possibly 'null'.
+src/app/student/messages/page.tsx(50,52): error TS18047: 'otherUser' is possibly 'null'.
+src/app/student/messages/page.tsx(51,42): error TS18047: 'otherUser' is possibly 'null'.
+src/app/student/messages/page.tsx(51,74): error TS18047: 'otherUser' is possibly 'null'.
+src/app/tutor/bookings/page.tsx(214,30): error TS2367: This comparison appears to be unintentional because the types '"pending" | "confirmed" | "in_progress" | "completed" | "cancelled" | "all"' and '"today"' have no overlap.
+src/app/tutor/bookings/page.tsx(215,30): error TS2367: This comparison appears to be unintentional because the types '"pending" | "confirmed" | "in_progress" | "completed" | "cancelled" | "all"' and '"upcoming"' have no overlap.
+src/app/tutor/bookings/page.tsx(216,30): error TS2367: This comparison appears to be unintentional because the types '"pending" | "confirmed" | "in_progress" | "completed" | "cancelled" | "all"' and '"requests"' have no overlap.
+src/app/tutor/bookings/page.tsx(217,30): error TS2367: This comparison appears to be unintentional because the types '"pending" | "confirmed" | "in_progress" | "completed" | "cancelled" | "all"' and '"past"' have no overlap.
+src/lib/services/subscription.service.ts(172,33): error TS2349: This expression is not callable.
+  Type 'QueryDocumentSnapshot<DocumentData, DocumentData>' has no call signatures.

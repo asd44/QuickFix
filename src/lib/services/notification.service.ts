@@ -1,94 +1,124 @@
-import { doc, updateDoc, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { db } from '@/lib/firebase/config';
-import { requestNotificationPermission as getFCMToken } from '@/lib/firebase/messaging';
+import { doc, updateDoc, arrayUnion, collection, addDoc, serverTimestamp, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
+import { PushNotifications } from '@capacitor/push-notifications';
+import { Capacitor } from '@capacitor/core';
+
+export interface AppNotification {
+    id?: string;
+    title: string;
+    body: string;
+    userId: string;
+    read: boolean;
+    createdAt: any;
+    data?: any;
+}
 
 export class NotificationService {
-    // Request permission and save FCM token to user document
-    static async enableNotifications(userId: string): Promise<boolean> {
-        try {
-            const token = await getFCMToken();
-
-            if (!token) {
-                return false;
+    // Request permissions and register for push notifications
+    static async requestPermissions(): Promise<boolean> {
+        if (Capacitor.isNativePlatform()) {
+            try {
+                const result = await PushNotifications.requestPermissions();
+                if (result.receive === 'granted') {
+                    await PushNotifications.register();
+                    return true;
+                }
+            } catch (error) {
+                console.error('Error requesting push permissions:', error);
             }
+        } else {
+            // Web handling (optional, requires service worker)
+            console.log('Push notifications not fully implemented for web yet');
+        }
+        return false;
+    }
 
-            // Save token to user document
-            await updateDoc(doc(db, 'users', userId), {
+    // Register listeners for native push notifications
+    static registerListeners(userId: string) {
+        if (!Capacitor.isNativePlatform()) return;
+
+        // On registration success
+        PushNotifications.addListener('registration', async (token) => {
+            console.log('Push registration success, token: ' + token.value);
+            await this.saveFcmToken(userId, token.value);
+        });
+
+        // On registration error
+        PushNotifications.addListener('registrationError', (error) => {
+            console.error('Error on registration: ' + JSON.stringify(error));
+        });
+
+        // On notification received in foreground
+        PushNotifications.addListener('pushNotificationReceived', (notification) => {
+            console.log('Push received: ' + JSON.stringify(notification));
+            // You can show a local toast or update UI here
+        });
+
+        // On notification tapped
+        PushNotifications.addListener('pushNotificationActionPerformed', (notification) => {
+            console.log('Push action performed: ' + JSON.stringify(notification));
+            // Handle navigation based on data
+        });
+    }
+
+    // Save FCM token to user profile
+    static async saveFcmToken(userId: string, token: string) {
+        try {
+            const userRef = doc(db, 'users', userId);
+            await updateDoc(userRef, {
                 fcmTokens: arrayUnion(token),
-                'notificationSettings.enabled': true,
-            });
-
-            return true;
-        } catch (error) {
-            console.error('Error enabling notifications:', error);
-            return false;
-        }
-    }
-
-    // Remove FCM token from user document
-    static async disableNotifications(userId: string, token: string): Promise<void> {
-        try {
-            await updateDoc(doc(db, 'users', userId), {
-                fcmTokens: arrayRemove(token),
+                lastTokenUpdate: serverTimestamp()
             });
         } catch (error) {
-            console.error('Error disabling notifications:', error);
+            console.error('Error saving FCM token:', error);
         }
     }
 
-    // Update notification settings
-    static async updateNotificationSettings(
-        userId: string,
-        settings: {
-            messages?: boolean;
-            verifications?: boolean;
-            subscriptions?: boolean;
-            admin?: boolean;
-        }
-    ): Promise<void> {
+    // Send a notification (Simulated by writing to Firestore)
+    // In a real app, this would be done via Cloud Functions
+    static async sendNotification(userId: string, title: string, body: string, data: any = {}) {
         try {
-            const updates: any = {};
-
-            if (settings.messages !== undefined) {
-                updates['notificationSettings.messages'] = settings.messages;
-            }
-            if (settings.verifications !== undefined) {
-                updates['notificationSettings.verifications'] = settings.verifications;
-            }
-            if (settings.subscriptions !== undefined) {
-                updates['notificationSettings.subscriptions'] = settings.subscriptions;
-            }
-            if (settings.admin !== undefined) {
-                updates['notificationSettings.admin'] = settings.admin;
-            }
-
-            await updateDoc(doc(db, 'users', userId), updates);
-        } catch (error) {
-            console.error('Error updating notification settings:', error);
-        }
-    }
-
-    // Show browser notification (when app is open)
-    static showNotification(title: string, body: string, icon?: string, clickUrl?: string) {
-        if ('Notification' in window && Notification.permission === 'granted') {
-            const notification = new Notification(title, {
+            // 1. Write to user's notification collection (for in-app list)
+            await addDoc(collection(db, 'users', userId, 'notifications'), {
+                title,
                 body,
-                icon: icon || '/icon-192.png',
-                badge: '/icon-192.png',
-                tag: 'tutorlink-notification',
-                requireInteraction: false,
+                read: false,
+                data,
+                createdAt: serverTimestamp()
             });
 
-            if (clickUrl) {
-                notification.onclick = () => {
-                    window.focus();
-                    window.location.href = clickUrl;
-                    notification.close();
-                };
-            }
+            // 2. (Optional) If we had Cloud Functions, writing here could trigger a real FCM push
+            console.log(`Notification sent to ${userId}: ${title}`);
+        } catch (error) {
+            console.error('Error sending notification:', error);
+        }
+    }
 
-            // Auto close after 5 seconds
-            setTimeout(() => notification.close(), 5000);
+    // Listen to notifications (for in-app display)
+    static listenToNotifications(userId: string, callback: (notifications: AppNotification[]) => void) {
+        const q = query(
+            collection(db, 'users', userId, 'notifications'),
+            orderBy('createdAt', 'desc'),
+            limit(20)
+        );
+
+        return onSnapshot(q, (snapshot) => {
+            const notifications = snapshot.docs.map(doc => ({
+                id: doc.id,
+                ...doc.data()
+            } as AppNotification));
+            callback(notifications);
+        });
+    }
+
+    // Mark notification as read
+    static async markAsRead(userId: string, notificationId: string) {
+        try {
+            await updateDoc(doc(db, 'users', userId, 'notifications', notificationId), {
+                read: true
+            });
+        } catch (error) {
+            console.error('Error marking notification as read:', error);
         }
     }
 }

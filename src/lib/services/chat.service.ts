@@ -134,34 +134,31 @@ export class ChatService {
         });
 
         // Show browser notification if other user has them enabled
+        // Send notification unconditionally (Service handles platform checks)
         try {
             if (otherUserId) {
                 const otherUserDoc = await getDoc(doc(db, 'users', otherUserId));
                 if (otherUserDoc.exists()) {
                     const otherUser = otherUserDoc.data();
-                    if (otherUser.notificationSettings?.enabled && otherUser.notificationSettings?.messages) {
+                    if (otherUser.notificationSettings?.enabled !== false) { // Default to true if undefined
                         // Get sender's name
                         const senderDoc = await getDoc(doc(db, 'users', senderId));
                         const senderName = senderDoc.exists()
                             ? `${senderDoc.data().studentProfile?.firstName || senderDoc.data().tutorProfile?.firstName || 'Someone'}`
                             : 'Someone';
 
-                        // Show notification (browser-side only for now)
-                        if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-                            const { NotificationService } = await import('./notification.service');
-                            await NotificationService.sendNotification(
-                                otherUserId,
-                                `New message from ${senderName}`,
-                                text.substring(0, 100),
-                                { clickAction: '/messages' }
-                            );
-                        }
+                        const { NotificationService } = await import('./notification.service');
+                        await NotificationService.sendNotification(
+                            otherUserId,
+                            `New message from ${senderName}`,
+                            text.substring(0, 100),
+                            { clickAction: '/messages', chatId: chatId }
+                        );
                     }
                 }
             }
         } catch (error) {
             console.error('Error sending notification:', error);
-            // Don't fail message send if notification fails
         }
     }
 

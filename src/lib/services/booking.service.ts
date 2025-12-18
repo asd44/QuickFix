@@ -1,4 +1,4 @@
-import { collection, addDoc, query, where, getDocs, doc, updateDoc, serverTimestamp, Timestamp, orderBy as firestoreOrderBy } from 'firebase/firestore';
+import { collection, addDoc, query, where, getDocs, doc, updateDoc, serverTimestamp, Timestamp, orderBy as firestoreOrderBy, onSnapshot, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase/config';
 import { Booking } from '@/lib/types/database';
 
@@ -8,8 +8,6 @@ import { NotificationService } from '@/lib/services/notification.service';
 export class BookingService {
     // Create a new booking
     static async createBooking(bookingData: Omit<Booking, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {
-        const { setDoc, getDoc, doc } = await import('firebase/firestore');
-
         console.log('BookingService.createBooking called with data:', bookingData);
 
         // Normalize date to midnight to ensure consistency
@@ -67,12 +65,81 @@ export class BookingService {
         return bookingId;
     }
 
-    // Get single booking by ID
-    // Get single booking by ID
+    // Cache for user phone numbers to avoid repeated fetches
+    private static phoneCache = new Map<string, string>();
+    private static phonePromises = new Map<string, Promise<string | undefined>>();
+
+    private static async getPhoneNumber(userId: string): Promise<string | undefined> {
+        if (this.phoneCache.has(userId)) return this.phoneCache.get(userId);
+        if (this.phonePromises.has(userId)) return this.phonePromises.get(userId);
+
+        const promise = (async () => {
+            try {
+                const snap = await getDoc(doc(db, 'users', userId));
+                const phone = snap.exists() ? snap.data().phoneNumber : undefined;
+                if (phone) this.phoneCache.set(userId, phone);
+                return phone;
+            } catch (e) {
+                console.error("Error fetching phone for", userId, e);
+                return undefined;
+            } finally {
+                this.phonePromises.delete(userId);
+            }
+        })();
+
+        this.phonePromises.set(userId, promise);
+        return promise;
+    }
+
+    // Listens to a single booking in real-time
+    static listenToBooking(bookingId: string, callback: (booking: (Booking & { tutorPhoneNumber?: string; studentPhoneNumber?: string }) | null) => void): () => void {
+        const docRef = doc(db, 'bookings', bookingId);
+        let cachedTutorPhone: string | undefined;
+        let cachedStudentPhone: string | undefined;
+
+        return onSnapshot(docRef, async (docSnap: any) => {
+            if (docSnap.exists()) {
+                const data = docSnap.data();
+
+                // 1. Emit immediately with cached/current data (FAST UPDATE for status changes)
+                callback({
+                    id: docSnap.id,
+                    ...data,
+                    tutorPhoneNumber: cachedTutorPhone,
+                    studentPhoneNumber: cachedStudentPhone
+                } as Booking & { tutorPhoneNumber?: string; studentPhoneNumber?: string });
+
+                // 2. data fetching if missing (Eventual consistency)
+                let needsUpdate = false;
+                if (data.tutorId && !cachedTutorPhone) {
+                    cachedTutorPhone = await this.getPhoneNumber(data.tutorId);
+                    needsUpdate = true;
+                }
+                if (data.studentId && !cachedStudentPhone) {
+                    cachedStudentPhone = await this.getPhoneNumber(data.studentId);
+                    needsUpdate = true;
+                }
+
+                // 3. Emit again if we fetched new data
+                if (needsUpdate) {
+                    callback({
+                        id: docSnap.id,
+                        ...data,
+                        tutorPhoneNumber: cachedTutorPhone,
+                        studentPhoneNumber: cachedStudentPhone
+                    } as Booking & { tutorPhoneNumber?: string; studentPhoneNumber?: string });
+                }
+            } else {
+                callback(null);
+            }
+        });
+    }
+
+    // Get single booking by ID (Legacy one-time fetch)
     static async getBookingById(bookingId: string): Promise<(Booking & { tutorPhoneNumber?: string; studentPhoneNumber?: string }) | null> {
         try {
             const docRef = doc(db, 'bookings', bookingId);
-            const docSnap = await import('firebase/firestore').then(mod => mod.getDoc(docRef));
+            const docSnap = await getDoc(docRef);
 
             if (docSnap.exists()) {
                 const data = docSnap.data();
@@ -83,7 +150,7 @@ export class BookingService {
                     // Fetch Tutor Phone
                     if (data.tutorId) {
                         const tutorDocRef = doc(db, 'users', data.tutorId);
-                        const tutorDocSnap = await import('firebase/firestore').then(mod => mod.getDoc(tutorDocRef));
+                        const tutorDocSnap = await getDoc(tutorDocRef);
                         if (tutorDocSnap.exists()) {
                             tutorPhoneNumber = tutorDocSnap.data().phoneNumber;
                         }
@@ -91,7 +158,7 @@ export class BookingService {
                     // Fetch Student Phone
                     if (data.studentId) {
                         const studentDocRef = doc(db, 'users', data.studentId);
-                        const studentDocSnap = await import('firebase/firestore').then(mod => mod.getDoc(studentDocRef));
+                        const studentDocSnap = await getDoc(studentDocRef);
                         if (studentDocSnap.exists()) {
                             studentPhoneNumber = studentDocSnap.data().phoneNumber;
                         }
@@ -114,7 +181,89 @@ export class BookingService {
         }
     }
 
-    // Get student's bookings
+    // Listens to student's bookings in real-time
+    static listenToStudentBookings(studentId: string, callback: (bookings: (Booking & { id: string, tutorPhoneNumber?: string })[]) => void): () => void {
+        const q = query(
+            collection(db, 'bookings'),
+            where('studentId', '==', studentId),
+            firestoreOrderBy('date', 'desc')
+        );
+
+        return onSnapshot(q, async (snapshot: any) => {
+            // First pass: Map docs to objects immediately
+            const bookings = snapshot.docs.map((docSnapshot: any) => ({
+                id: docSnapshot.id,
+                ...docSnapshot.data(),
+                tutorPhoneNumber: docSnapshot.data().tutorId ? this.phoneCache.get(docSnapshot.data().tutorId) : undefined
+            }));
+
+            // Emit immediate update
+            callback(bookings);
+
+            // Second pass: Fetch missing phones
+            let hasNewData = false;
+            await Promise.all(snapshot.docs.map(async (docSnapshot: any) => {
+                const data = docSnapshot.data();
+                if (data.tutorId && !this.phoneCache.has(data.tutorId)) {
+                    await this.getPhoneNumber(data.tutorId);
+                    hasNewData = true;
+                }
+            }));
+
+            // Emit update if cache was populated
+            if (hasNewData) {
+                const updatedBookings = snapshot.docs.map((docSnapshot: any) => ({
+                    id: docSnapshot.id,
+                    ...docSnapshot.data(),
+                    tutorPhoneNumber: docSnapshot.data().tutorId ? this.phoneCache.get(docSnapshot.data().tutorId) : undefined
+                }));
+                callback(updatedBookings);
+            }
+        });
+    }
+
+    // Listens to tutor's bookings in real-time
+    static listenToTutorBookings(tutorId: string, callback: (bookings: (Booking & { id: string; studentPhoneNumber?: string })[]) => void): () => void {
+        const q = query(
+            collection(db, 'bookings'),
+            where('tutorId', '==', tutorId),
+            firestoreOrderBy('date', 'desc')
+        );
+
+        return onSnapshot(q, async (snapshot: any) => {
+            // First pass: Map docs to objects immediately
+            const bookings = snapshot.docs.map((docSnapshot: any) => ({
+                id: docSnapshot.id,
+                ...docSnapshot.data(),
+                studentPhoneNumber: docSnapshot.data().studentId ? this.phoneCache.get(docSnapshot.data().studentId) : undefined
+            }));
+
+            // Emit immediate update
+            callback(bookings);
+
+            // Second pass: Fetch missing phones
+            let hasNewData = false;
+            await Promise.all(snapshot.docs.map(async (docSnapshot: any) => {
+                const data = docSnapshot.data();
+                if (data.studentId && !this.phoneCache.has(data.studentId)) {
+                    await this.getPhoneNumber(data.studentId);
+                    hasNewData = true;
+                }
+            }));
+
+            // Emit update if cache was populated
+            if (hasNewData) {
+                const updatedBookings = snapshot.docs.map((docSnapshot: any) => ({
+                    id: docSnapshot.id,
+                    ...docSnapshot.data(),
+                    studentPhoneNumber: docSnapshot.data().studentId ? this.phoneCache.get(docSnapshot.data().studentId) : undefined
+                }));
+                callback(updatedBookings);
+            }
+        });
+    }
+
+    // Get student's bookings (Legacy one-time fetch)
     static async getStudentBookings(studentId: string): Promise<(Booking & { id: string, tutorPhoneNumber?: string })[]> {
         console.log('getStudentBookings called with studentId:', studentId);
 
@@ -155,7 +304,7 @@ export class BookingService {
         return bookings;
     }
 
-    // Get tutor's bookings
+    // Get tutor's bookings (Legacy one-time fetch)
     static async getTutorBookings(tutorId: string): Promise<(Booking & { id: string; studentPhoneNumber?: string })[]> {
         console.log('getTutorBookings called with tutorId:', tutorId);
 
@@ -305,7 +454,7 @@ export class BookingService {
             collection(db, 'bookings'),
             where('tutorId', '==', tutorId),
             where('date', '==', startTimestamp),
-            where('status', 'in', ['pending', 'confirmed', 'in_progress'])
+            where('status', 'in', ['pending', 'confirmed', 'in_progress', 'completed'])
         );
 
         const snapshot = await getDocs(q);
@@ -367,6 +516,18 @@ export class BookingService {
             updatedAt: serverTimestamp(),
         });
 
+        // Notify Student
+        try {
+            NotificationService.sendNotification(
+                booking.studentId,
+                'Job Started',
+                `Your service with ${booking.tutorName} has started!`,
+                { bookingId, type: 'job_started' }
+            ).catch(console.error);
+        } catch (e) {
+            console.error("Failed to notify student of job start", e);
+        }
+
         return completionCode;
     }
 
@@ -427,6 +588,18 @@ export class BookingService {
             finalPaymentStatus: 'pending',
             updatedAt: serverTimestamp(),
         });
+
+        // Notify Student
+        try {
+            NotificationService.sendNotification(
+                booking.studentId,
+                'Job Completed',
+                `Your service is complete. Final Bill: ₹${amount}`,
+                { bookingId, type: 'job_completed' }
+            ).catch(console.error);
+        } catch (e) {
+            console.error("Failed to notify student of completion", e);
+        }
     }
 
     // Regenerate completion code (if expired or forgotten)

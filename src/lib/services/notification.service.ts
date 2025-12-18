@@ -1,6 +1,7 @@
 import { db } from '@/lib/firebase/config';
 import { doc, updateDoc, arrayUnion, collection, addDoc, serverTimestamp, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 import { PushNotifications } from '@capacitor/push-notifications';
+import { LocalNotifications } from '@capacitor/local-notifications';
 import { Capacitor } from '@capacitor/core';
 
 export interface AppNotification {
@@ -18,8 +19,13 @@ export class NotificationService {
     static async requestPermissions(): Promise<boolean> {
         if (Capacitor.isNativePlatform()) {
             try {
+                // Request Push Permissions
                 const result = await PushNotifications.requestPermissions();
-                if (result.receive === 'granted') {
+
+                // Request Local Notification Permissions
+                const localResult = await LocalNotifications.requestPermissions();
+
+                if (result.receive === 'granted' || localResult.display === 'granted') {
                     await PushNotifications.register();
                     return true;
                 }
@@ -33,9 +39,35 @@ export class NotificationService {
         return false;
     }
 
-    // Register listeners for native push notifications
-    static registerListeners(userId: string) {
+    // Show Local Notification (Bridge for missing backend)
+    static async showLocalNotification(title: string, body: string, id: number = Math.floor(Math.random() * 100000)) {
         if (!Capacitor.isNativePlatform()) return;
+
+        try {
+            await LocalNotifications.schedule({
+                notifications: [
+                    {
+                        title,
+                        body,
+                        id,
+                        schedule: { at: new Date(Date.now() + 100) }, // Immediate
+                        sound: 'default',
+                        attachments: undefined,
+                        actionTypeId: '',
+                        extra: null
+                    }
+                ]
+            });
+        } catch (error) {
+            console.error('Error showing local notification:', error);
+        }
+    }
+
+    // Register listeners for native push notifications
+    static async registerListeners(userId: string) {
+        if (!Capacitor.isNativePlatform()) return;
+
+        await PushNotifications.removeAllListeners();
 
         // On registration success
         PushNotifications.addListener('registration', async (token) => {

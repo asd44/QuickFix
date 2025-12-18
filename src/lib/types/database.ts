@@ -34,6 +34,7 @@ export interface StudentProfile {
     address?: string;
     favorites: string[]; // tutor UIDs
     profilePicture?: string; // Storage URL
+    grade?: string;
     coordinates?: {
         latitude: number;
         longitude: number;

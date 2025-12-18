@@ -30,33 +30,24 @@ export default function StudentBookingsPage() {
 
     useEffect(() => {
         if (user) {
-            loadBookings();
+            setLoading(true);
+            const unsubscribe = BookingService.listenToStudentBookings(user.uid, (bookingsData) => {
+                console.log('Real-time student bookings update:', bookingsData.length);
+                setBookings(bookingsData);
+                setLoading(false);
+            });
+            return () => unsubscribe();
         }
     }, [user]);
 
-    const loadBookings = async () => {
-        if (!user) return;
 
-        setLoading(true);
-        try {
-            console.log('Loading bookings for student:', user.uid);
-            const allBookings = await BookingService.getStudentBookings(user.uid);
-            console.log('Student bookings fetched:', allBookings);
-            console.log('Number of bookings:', allBookings.length);
-            setBookings(allBookings);
-        } catch (error) {
-            console.error('Failed to load bookings:', error);
-        } finally {
-            setLoading(false);
-        }
-    };
 
     const handleCancelBooking = async (bookingId: string) => {
         if (!confirm('Are you sure you want to cancel this booking?')) return;
 
         try {
             await BookingService.cancelBooking(bookingId, 'Cancelled by student');
-            loadBookings();
+            // loadBookings(); // Auto-updated by listener
         } catch (error) {
             console.error('Failed to cancel booking:', error);
             alert('Failed to cancel booking');
@@ -70,7 +61,7 @@ export default function StudentBookingsPage() {
         try {
             const newCode = await BookingService.regenerateCompletionCode(bookingId);
             alert(`New completion code: ${newCode}`);
-            loadBookings();
+            // loadBookings(); // Auto-updated by listener
         } catch (error) {
             console.error('Failed to regenerate code:', error);
             alert('Failed to regenerate code');
@@ -85,7 +76,7 @@ export default function StudentBookingsPage() {
         try {
             await BookingService.markFinalBillPaidInCash(bookingId);
             alert('Payment marked as completed!');
-            loadBookings();
+            // loadBookings(); // Auto-updated by listener
         } catch (error) {
             console.error('Failed to mark payment as completed:', error);
             alert('Failed to update payment status');
@@ -118,7 +109,7 @@ export default function StudentBookingsPage() {
             });
 
             alert('Thank you for your rating!');
-            loadBookings();
+            // loadBookings(); // Auto-updated by listener
         } catch (error: any) {
             console.error('Failed to submit rating:', error);
             alert(error.message || 'Failed to submit rating');

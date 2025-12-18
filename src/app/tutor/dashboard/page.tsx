@@ -21,27 +21,32 @@ export default function TutorDashboard() {
 
     useEffect(() => {
         if (user && userData?.role === 'tutor') {
-            Promise.all([
-                InterestedStudentService.getInterestedStudents(user.uid),
-                BookingService.getTutorBookings(user.uid)
-            ]).then(([students, bookingsData]) => {
-                // Deduplicate by studentId - keep only the most recent interaction
+            // 1. Listen to Interested Students (Real-time)
+            const unsubscribeInterested = InterestedStudentService.listenToInterestedStudents(user.uid, (students) => {
+                // De-duplicate in case of weird Firestore behavior, though likely not needed with listener
                 const uniqueStudents = students.reduce((acc, current) => {
                     const existing = acc.find(s => s.studentId === current.studentId);
                     if (!existing) {
                         acc.push(current);
                     } else if (current.timestamp.toDate() > existing.timestamp.toDate()) {
-                        // Replace with more recent interaction
                         const index = acc.findIndex(s => s.studentId === current.studentId);
                         acc[index] = current;
                     }
                     return acc;
                 }, [] as InterestedStudent[]);
-
                 setInterestedStudents(uniqueStudents);
+            });
+
+            // 2. Subscribe to Bookings (Real-time)
+            const unsubscribe = BookingService.listenToTutorBookings(user.uid, (bookingsData) => {
                 setBookings(bookingsData);
                 setLoading(false);
             });
+
+            return () => {
+                unsubscribe();
+                unsubscribeInterested();
+            };
         }
     }, [user, userData]);
 

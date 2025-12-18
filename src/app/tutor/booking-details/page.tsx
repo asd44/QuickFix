@@ -30,28 +30,19 @@ function BookingDetailsContent() {
 
     useEffect(() => {
         if (user?.uid && bookingId) {
-            loadBookingDetails();
+            setLoading(true);
+            const unsubscribe = BookingService.listenToBooking(bookingId, (updatedBooking) => {
+                if (updatedBooking) {
+                    setBooking(updatedBooking);
+                } else {
+                    alert('Booking not found');
+                    router.back();
+                }
+                setLoading(false);
+            });
+            return () => unsubscribe();
         }
     }, [user?.uid, bookingId]);
-
-    const loadBookingDetails = async () => {
-        if (!bookingId) return;
-        setLoading(true);
-        try {
-            const bookingData = await BookingService.getBookingById(bookingId);
-            if (bookingData) {
-                setBooking({ ...bookingData, id: bookingId });
-            } else {
-                alert('Booking not found');
-                router.back();
-            }
-        } catch (error) {
-            console.error('Failed to load booking:', error);
-            alert('Failed to load booking details');
-        } finally {
-            setLoading(false);
-        }
-    };
 
     const handleMessage = async () => {
         if (!booking || !user) return;
@@ -75,7 +66,8 @@ function BookingDetailsContent() {
         if (!booking) return;
         try {
             await BookingService.updateBookingStatus(booking.id, 'confirmed');
-            loadBookingDetails();
+            await BookingService.updateBookingStatus(booking.id, 'confirmed');
+            // loadBookingDetails(); // Updated by listener
         } catch (error) {
             console.error('Failed to accept booking:', error);
             alert('Failed to accept booking');
@@ -106,7 +98,7 @@ function BookingDetailsContent() {
             alert(`Job started! Customer's completion code: ${code}\n\nCustomer will share this code with you after work is done.`);
             setStartingJob(false);
             setStartCode('');
-            loadBookingDetails();
+            // loadBookingDetails(); // Updated by listener
         } catch (error: any) {
             console.error('Failed to start job:', error);
             alert(error.message || 'Failed to start job');
@@ -138,7 +130,7 @@ function BookingDetailsContent() {
             setCompletionCode('');
             setBillAmount('');
             setBillDetails('');
-            loadBookingDetails();
+            // loadBookingDetails(); // Updated by listener
         } catch (error: any) {
             console.error('Failed to complete job:', error);
             alert(error.message || 'Failed to complete job');

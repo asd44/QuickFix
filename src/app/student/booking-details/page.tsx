@@ -26,35 +26,26 @@ function BookingDetailsContent() {
 
     useEffect(() => {
         if (user && bookingId) {
-            loadBookingDetails();
+            setLoading(true);
+            const unsubscribe = BookingService.listenToBooking(bookingId, (updatedBooking) => {
+                if (updatedBooking) {
+                    setBooking(updatedBooking);
+                } else {
+                    alert('Booking not found');
+                    router.back();
+                }
+                setLoading(false);
+            });
+            return () => unsubscribe();
         }
     }, [user, bookingId]);
-
-    const loadBookingDetails = async () => {
-        if (!bookingId) return;
-        setLoading(true);
-        try {
-            const bookingData = await BookingService.getBookingById(bookingId);
-            if (bookingData) {
-                setBooking({ ...bookingData, id: bookingId });
-            } else {
-                alert('Booking not found');
-                router.back();
-            }
-        } catch (error) {
-            console.error('Failed to load booking:', error);
-            alert('Failed to load booking details');
-        } finally {
-            setLoading(false);
-        }
-    };
 
     const handleCancelBooking = async () => {
         if (!booking || !confirm('Are you sure you want to cancel this booking?')) return;
 
         try {
             await BookingService.cancelBooking(booking.id, 'Cancelled by student');
-            loadBookingDetails();
+            // loadBookingDetails(); // Updated by listener
         } catch (error) {
             console.error('Failed to cancel booking:', error);
             alert('Failed to cancel booking');
@@ -68,7 +59,7 @@ function BookingDetailsContent() {
         try {
             const newCode = await BookingService.regenerateCompletionCode(booking.id);
             alert(`New completion code: ${newCode}`);
-            loadBookingDetails();
+            // loadBookingDetails(); // Updated by listener
         } catch (error) {
             console.error('Failed to regenerate code:', error);
             alert('Failed to regenerate code');
@@ -117,7 +108,7 @@ function BookingDetailsContent() {
             });
 
             alert('Thank you for your rating!');
-            loadBookingDetails();
+            // loadBookingDetails(); // Updated by listener
         } catch (error: any) {
             console.error('Failed to submit rating:', error);
             alert(error.message || 'Failed to submit rating');
@@ -140,7 +131,7 @@ function BookingDetailsContent() {
             });
 
             alert('Payment successful!');
-            loadBookingDetails();
+            // loadBookingDetails(); // Updated by listener
         } catch (error) {
             console.error('Failed to update payment:', error);
             alert('Failed to update payment status');

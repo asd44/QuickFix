@@ -32,29 +32,53 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
 
     useEffect(() => {
-        const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+        let unsubscribeUser: (() => void) | undefined;
+
+        const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser) => {
             setUser(firebaseUser);
 
+            // Clean up previous user listener if exists
+            if (unsubscribeUser) {
+                unsubscribeUser();
+                unsubscribeUser = undefined;
+            }
+
             if (firebaseUser) {
+                // Initialize Notifications
+                import('@/lib/services/notification.service').then(async ({ NotificationService }) => {
+                    try {
+                        const granted = await NotificationService.requestPermissions();
+                        if (granted) {
+                            NotificationService.registerListeners(firebaseUser.uid);
+                        }
+                        // 3. Listen to Firestore notifications (In-App & Local Bridge)
+                        const startTime = Date.now();
+                        let isFirstLoad = true;
+
+                        NotificationService.listenToNotifications(firebaseUser.uid, (notifications) => {
+                            // On subsequent updates, check for new items
+                            if (!isFirstLoad) {
+                                notifications.forEach(n => {
+                                    // Check if created recently (after we started listening)
+                                    // And assume it's new if we haven't seen it (simple approach: timestamp check)
+                                    const createdAt = n.createdAt?.toMillis ? n.createdAt.toMillis() : Date.now();
+                                    if (createdAt > startTime) {
+                                        // Show Local Notification!
+                                        NotificationService.showLocalNotification(n.title, n.body);
+                                    }
+                                });
+                            }
+                            isFirstLoad = false;
+                        });
+                    } catch (error) {
+                        console.error('Failed to init notifications:', error);
+                    }
+                });
+
                 // Subscribe to user document changes
-                const unsubscribeUser = onSnapshot(doc(db, 'users', firebaseUser.uid), (docSnapshot) => {
+                unsubscribeUser = onSnapshot(doc(db, 'users', firebaseUser.uid), (docSnapshot) => {
                     if (docSnapshot.exists()) {
                         setUserData(docSnapshot.data() as User);
-
-                        // Initialize Notifications
-                        import('@/lib/services/notification.service').then(async ({ NotificationService }) => {
-                            // 1. Request permissions (Native only)
-                            await NotificationService.requestPermissions();
-
-                            // 2. Register listeners (Native only)
-                            NotificationService.registerListeners(firebaseUser.uid);
-
-                            // 3. Listen to Firestore notifications (In-App)
-                            NotificationService.listenToNotifications(firebaseUser.uid, (notifications) => {
-                                console.log('Received in-app notifications:', notifications);
-                                // You could update a global notification state here if needed
-                            });
-                        });
                     } else {
                         setUserData(null);
                     }
@@ -64,18 +88,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
                     setUserData(null);
                     setLoading(false);
                 });
-
-                // Cleanup subscription on auth state change or unmount
-                return () => {
-                    unsubscribeUser();
-                };
             } else {
                 setUserData(null);
                 setLoading(false);
             }
         });
 
-        return unsubscribe;
+        // Cleanup subscription on unmount
+        return () => {
+            unsubscribeAuth();
+            if (unsubscribeUser) unsubscribeUser();
+        };
     }, []);
 
     const signOut = async () => {

@@ -1,4 +1,4 @@
-import { collection, addDoc, getDocs, query, where, serverTimestamp, Timestamp } from 'firebase/firestore';
+import { collection, addDoc, getDocs, query, where, serverTimestamp, Timestamp, onSnapshot } from 'firebase/firestore';
 import { db } from '@/lib/firebase/config';
 import { InterestedStudent } from '@/lib/types/database';
 import { UserService } from './user.service';
@@ -34,7 +34,7 @@ export class InterestedStudentService {
             timestamp: serverTimestamp() as Timestamp,
             studentInfo: {
                 firstName: student.studentProfile.firstName,
-                grade: student.studentProfile.grade,
+                grade: student.studentProfile.grade || '',
                 city: student.studentProfile.city,
             },
         };
@@ -55,5 +55,22 @@ export class InterestedStudentService {
             .map(doc => ({ id: doc.id, ...doc.data() } as InterestedStudent))
             .sort((a, b) => b.timestamp.toMillis() - a.timestamp.toMillis())
             .slice(0, limit);
+    }
+
+    // Listen to interested students in real-time
+    static listenToInterestedStudents(tutorId: string, callback: (students: InterestedStudent[]) => void, limitCount: number = 50): () => void {
+        const q = query(
+            collection(db, 'interestedStudents'),
+            where('tutorId', '==', tutorId),
+            where('timestamp', '>', Timestamp.fromDate(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000))) // Last 30 days
+        );
+
+        return onSnapshot(q, (snapshot) => {
+            const students = snapshot.docs
+                .map(doc => ({ id: doc.id, ...doc.data() } as InterestedStudent))
+                .sort((a, b) => b.timestamp.toMillis() - a.timestamp.toMillis())
+                .slice(0, limitCount);
+            callback(students);
+        });
     }
 }

@@ -11,6 +11,15 @@ import { BackHeader } from '@/components/BackHeader';
 import { Button } from '@/components/Button';
 import { Badge } from '@/components/Badge';
 
+// Helper to safely convert timestamp to Date
+function toDateSafe(timestamp: any): Date {
+    if (!timestamp) return new Date();
+    if (timestamp instanceof Date) return timestamp;
+    if (timestamp.toDate) return timestamp.toDate();
+    if (timestamp.seconds) return new Date(timestamp.seconds * 1000);
+    return new Date(timestamp);
+}
+
 function BookingDetailsContent() {
     const { user } = useAuth();
     const router = useRouter();
@@ -222,8 +231,8 @@ function BookingDetailsContent() {
                     <div className="grid grid-cols-2 gap-4">
                         <div className="bg-[#5A0E24]/5 rounded-xl p-4">
                             <span className="block text-xs font-bold text-[#5A0E24] uppercase tracking-wider mb-1">Date</span>
-                            <span className="block text-lg font-bold text-gray-900">{format(booking.date.toDate(), 'MMM dd, yyyy')}</span>
-                            <span className="block text-xs text-gray-500">{format(booking.date.toDate(), 'EEEE')}</span>
+                            <span className="block text-lg font-bold text-gray-900">{format(toDateSafe(booking.date), 'MMM dd, yyyy')}</span>
+                            <span className="block text-xs text-gray-500">{format(toDateSafe(booking.date), 'EEEE')}</span>
                         </div>
                         <div className="bg-[#5A0E24]/5 rounded-xl p-4">
                             <span className="block text-xs font-bold text-[#5A0E24] uppercase tracking-wider mb-1">Time</span>

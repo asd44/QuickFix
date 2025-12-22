@@ -11,6 +11,15 @@ import { useAuth } from '@/contexts/AuthContext';
 import { BookingService } from '@/lib/services/booking.service';
 import { format } from 'date-fns';
 
+// Helper to safely convert timestamp to Date
+function toDateSafe(timestamp: any): Date {
+  if (!timestamp) return new Date();
+  if (timestamp instanceof Date) return timestamp;
+  if (timestamp.toDate) return timestamp.toDate();
+  if (timestamp.seconds) return new Date(timestamp.seconds * 1000);
+  return new Date(timestamp);
+}
+
 export default function HomePage() {
   const { user, userData, loading: authLoading } = useAuth();
   const router = useRouter();
@@ -491,7 +500,7 @@ export default function HomePage() {
                               <p className="text-gray-200 text-sm truncate">{booking.subject || 'Service Request'}</p>
                               <div className="flex items-center gap-2 mt-1">
                                 <span className="text-xs text-white/80 bg-white/10 px-2 py-0.5 rounded-full">
-                                  {booking.date ? format(booking.date.toDate(), 'MMM dd') : 'TBD'}
+                                  {booking.date ? format(toDateSafe(booking.date), 'MMM dd') : 'TBD'}
                                 </span>
                                 <span className="text-xs text-yellow-400 font-medium">
                                   New

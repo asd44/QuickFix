@@ -1,8 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { db } from '@/lib/firebase/config';
-import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
+import { FirestoreREST } from '@/lib/firebase/nativeFirestore';
 import { User } from '@/lib/types/database';
 import Link from 'next/link';
 import { Card, CardContent } from '@/components/Card';
@@ -16,17 +15,11 @@ export default function AllProvidersPage() {
     useEffect(() => {
         const fetchProviders = async () => {
             try {
-                const q = query(
-                    collection(db, 'users'),
-                    where('role', '==', 'tutor'),
-                    // orderBy('createdAt', 'desc') // Requires index, might skip strict ordering for now or handle client side
-                );
-                const querySnapshot = await getDocs(q);
-                const providersList: User[] = [];
-                querySnapshot.forEach((doc) => {
-                    providersList.push({ ...doc.data(), uid: doc.id } as User);
+                const providersList = await FirestoreREST.query<User & { id: string }>('users', {
+                    where: [{ field: 'role', op: 'EQUAL', value: 'tutor' }]
                 });
-                setProviders(providersList);
+                // Add uid from id
+                setProviders(providersList.map(p => ({ ...p, uid: p.id })));
             } catch (error) {
                 console.error("Error fetching providers:", error);
             } finally {

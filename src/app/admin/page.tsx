@@ -2,11 +2,11 @@
 
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { db } from '@/lib/firebase/config';
-import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
+import { FirestoreREST } from '@/lib/firebase/nativeFirestore';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/Card';
 import { Badge } from '@/components/Badge';
 import Link from 'next/link';
+import { User, Booking, Complaint as ComplaintType } from '@/lib/types/database';
 
 interface VerificationRequest {
     id: string;
@@ -40,81 +40,80 @@ export default function AdminDashboard() {
     useEffect(() => {
         const fetchData = async () => {
             try {
-                // 1. Fetch Pending Verifications (Existing logic)
-                const usersRef = collection(db, 'users');
-                const qVerification = query(usersRef, where('tutorProfile.kyc.status', '==', 'pending'));
-
-                // 2. Fetch All Providers
-                const qProviders = query(usersRef, where('role', '==', 'tutor'));
-
-                // 3. Fetch All Customers
-                const qCustomers = query(usersRef, where('role', '==', 'student'));
-
-                // 4. Fetch Completed Bookings for Earnings
-                const bookingsRef = collection(db, 'bookings');
-                const qBookings = query(bookingsRef, where('status', '==', 'completed'));
-
-                // 5. Fetch Pending Complaints (Mock logic or actual if collection exists)
-                // Assuming 'complaints' collection exists based on types
-                const complaintsRef = collection(db, 'complaints');
-                const qComplaints = query(complaintsRef, where('status', '==', 'pending'));
-
-                // Execute all queries in parallel
+                // Fetch all data in parallel using FirestoreREST
                 const [
-                    verificationSnap,
-                    providersSnap,
-                    customersSnap,
-                    bookingsSnap,
-                    complaintsSnap
+                    allTutors,
+                    providers,
+                    customers,
+                    completedBookings,
+                    pendingComplaintsData
                 ] = await Promise.all([
-                    getDocs(qVerification),
-                    getDocs(qProviders),
-                    getDocs(qCustomers),
-                    getDocs(qBookings),
-                    getDocs(qComplaints)
+                    // Get all tutors and filter for pending verification client-side
+                    FirestoreREST.query<User & { id: string }>('users', {
+                        where: [{ field: 'role', op: 'EQUAL', value: 'tutor' }]
+                    }),
+                    FirestoreREST.query<User & { id: string }>('users', {
+                        where: [{ field: 'role', op: 'EQUAL', value: 'tutor' }]
+                    }),
+                    FirestoreREST.query<User & { id: string }>('users', {
+                        where: [{ field: 'role', op: 'EQUAL', value: 'student' }]
+                    }),
+                    FirestoreREST.query<Booking & { id: string }>('bookings', {
+                        where: [{ field: 'status', op: 'EQUAL', value: 'completed' }]
+                    }),
+                    FirestoreREST.query<ComplaintType & { id: string }>('complaints', {
+                        where: [{ field: 'status', op: 'EQUAL', value: 'pending' }]
+                    })
                 ]);
 
-                // Process Verifications List
-                const pendingVerifications: VerificationRequest[] = [];
-                verificationSnap.forEach((doc) => {
-                    const data = doc.data();
-                    pendingVerifications.push({
-                        id: doc.id,
-                        name: (data.tutorProfile?.firstName + ' ' + data.tutorProfile?.lastName) || 'Unknown User',
-                        email: data.email || data.phoneNumber || 'No Email',
-                        submittedAt: data.tutorProfile?.kyc?.submittedAt || new Date().toISOString(),
-                        status: 'pending'
-                    });
+                // Filter tutors who need verification (not verified yet)
+                const pendingKycUsers = allTutors.filter(user => {
+                    const isNotVerified = !user.tutorProfile?.verified;
+                    const hasDocuments = user.tutorProfile?.verificationDocuments &&
+                        user.tutorProfile.verificationDocuments.length > 0;
+                    const kycPending = user.tutorProfile?.kyc?.status === 'pending';
+
+                    // Show in verification queue if: not verified
+                    // (prioritize those with documents or pending KYC)
+                    return isNotVerified;
                 });
+
+                console.log('[AdminDashboard] All tutors:', allTutors.length);
+                console.log('[AdminDashboard] Unverified tutors:', pendingKycUsers.length);
+                allTutors.forEach(u => console.log('[AdminDashboard] Tutor:', u.id, 'verified:', u.tutorProfile?.verified, 'docs:', u.tutorProfile?.verificationDocuments?.length));
+
+                // Process Verifications List
+                const pendingVerifications: VerificationRequest[] = pendingKycUsers.map(user => ({
+                    id: user.id,
+                    name: (user.tutorProfile?.firstName + ' ' + user.tutorProfile?.lastName) || 'Unknown User',
+                    email: user.email || user.phoneNumber || 'No Email',
+                    submittedAt: user.tutorProfile?.kyc?.submittedAt || new Date().toISOString(),
+                    status: 'pending'
+                }));
                 setVerifications(pendingVerifications);
 
                 // Process Earnings
-                let earnings = 0;
-                bookingsSnap.forEach(doc => {
-                    const data = doc.data();
-                    earnings += (data.finalBillAmount || data.totalPrice || 0);
-                });
+                const earnings = completedBookings.reduce((sum, booking) =>
+                    sum + ((booking as any).finalBillAmount || booking.totalPrice || 0), 0);
 
                 // Process Complaints
-                const pendingComplaints: Complaint[] = [];
-                complaintsSnap.forEach(doc => {
-                    const data = doc.data();
-                    pendingComplaints.push({
-                        id: doc.id,
-                        subject: data.issue || 'No Subject',
-                        status: data.status,
-                        createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : new Date().toISOString()
-                    });
-                });
+                const pendingComplaints: Complaint[] = pendingComplaintsData.map(c => ({
+                    id: c.id,
+                    subject: c.issue || 'No Subject',
+                    status: c.status,
+                    createdAt: (c.createdAt as any)?.seconds
+                        ? new Date((c.createdAt as any).seconds * 1000).toISOString()
+                        : new Date().toISOString()
+                }));
                 setComplaints(pendingComplaints);
 
                 // Update Stats
                 setStats({
-                    pendingVerifications: verificationSnap.size,
-                    totalProviders: providersSnap.size,
-                    totalCustomers: customersSnap.size,
+                    pendingVerifications: pendingKycUsers.length,
+                    totalProviders: providers.length,
+                    totalCustomers: customers.length,
                     totalEarnings: earnings,
-                    pendingComplaints: complaintsSnap.size
+                    pendingComplaints: pendingComplaintsData.length
                 });
 
             } catch (error) {

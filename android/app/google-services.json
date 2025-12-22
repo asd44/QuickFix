@@ -14,6 +14,14 @@
       },
       "oauth_client": [
         {
+          "client_id": "739661928860-d76cd1274a26u383pntaloever49v6it.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.quickfix.app",
+            "certificate_hash": "f3f8aa42a8fcdabb74db471fb191eac518c11da1"
+          }
+        },
+        {
           "client_id": "739661928860-f1t5etn9jj7dtlvn065tudg5fv5gni1q.apps.googleusercontent.com",
           "client_type": 3
         }

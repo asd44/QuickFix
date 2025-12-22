@@ -16,6 +16,15 @@ import { Booking } from '@/lib/types/database';
 import { format, isPast, isFuture, isToday } from 'date-fns';
 import { BackHeader } from '@/components/BackHeader';
 
+// Helper to convert timestamp to Date (handles both Firebase Timestamp and plain object)
+const toDateSafe = (timestamp: any): Date => {
+    if (!timestamp) return new Date();
+    if (timestamp.toDate) return timestamp.toDate();
+    if (timestamp.seconds) return new Date(timestamp.seconds * 1000);
+    if (timestamp instanceof Date) return timestamp;
+    return new Date(timestamp);
+};
+
 export default function StudentBookingsPage() {
     const { user } = useAuth();
     const router = useRouter();
@@ -145,7 +154,7 @@ export default function StudentBookingsPage() {
     }).sort((a, b) => {
         // Helper to get timestamp from booking
         const getTime = (booking: Booking) => {
-            const date = booking.date.toDate();
+            const date = toDateSafe(booking.date);
             const [hours, minutes] = booking.startTime.split(':').map(Number);
             date.setHours(hours, minutes, 0, 0);
             return date.getTime();
@@ -277,15 +286,15 @@ export default function StudentBookingsPage() {
                                 <div className="flex items-center gap-3 mb-4">
                                     <div className="w-12 h-12 rounded-xl bg-[#f0f9fa] flex flex-col items-center justify-center text-[#005461]">
                                         <span className="text-[10px] uppercase font-bold">
-                                            {format(booking.date.toDate(), 'MMM')}
+                                            {format(toDateSafe(booking.date), 'MMM')}
                                         </span>
                                         <span className="text-xl font-bold leading-none">
-                                            {format(booking.date.toDate(), 'dd')}
+                                            {format(toDateSafe(booking.date), 'dd')}
                                         </span>
                                     </div>
                                     <div>
                                         <p className="font-semibold text-gray-900">
-                                            {format(booking.date.toDate(), 'EEEE')}
+                                            {format(toDateSafe(booking.date), 'EEEE')}
                                         </p>
                                         <p className="text-sm text-gray-500">
                                             {booking.startTime}
@@ -317,7 +326,7 @@ export default function StudentBookingsPage() {
                                             <span className="text-xs font-bold uppercase tracking-wider text-blue-800">Completion Code</span>
                                             {booking.codeExpiresAt && (
                                                 <span className="text-[10px] text-blue-600 bg-white/50 px-2 py-0.5 rounded-full">
-                                                    Expires {format(booking.codeExpiresAt.toDate(), 'h:mm a')}
+                                                    Expires {format(toDateSafe(booking.codeExpiresAt), 'h:mm a')}
                                                 </span>
                                             )}
                                         </div>
@@ -369,7 +378,7 @@ export default function StudentBookingsPage() {
                                         ) : (
                                             <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 p-2 rounded-lg">
                                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                                                Paid via {booking.paymentMethod === 'cash' ? 'Cash' : 'Online'} on {booking.paidAt ? format(booking.paidAt.toDate(), 'MMM dd') : 'Unknown date'}
+                                                Paid via {booking.paymentMethod === 'cash' ? 'Cash' : 'Online'} on {booking.paidAt ? format(toDateSafe(booking.paidAt), 'MMM dd') : 'Unknown date'}
                                             </div>
                                         )}
                                     </div>

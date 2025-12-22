@@ -15,7 +15,6 @@ import { InterestedStudentService } from '@/lib/services/interested-student.serv
 import { ChatService } from '@/lib/services/chat.service';
 import { RatingService } from '@/lib/services/rating.service';
 import { BookingService } from '@/lib/services/booking.service';
-import { Timestamp } from 'firebase/firestore';
 import { BackHeader } from '@/components/BackHeader';
 
 function TutorProfileContent() {
@@ -24,12 +23,14 @@ function TutorProfileContent() {
     const router = useRouter();
     const { user, userData } = useAuth();
 
-    // We can't use useDocument hook directly if tutorId is null, but the hook handles it?
-    // useDocument expects a string.
-    const { data: tutor, loading } = useDocument<User>('users', tutorId || 'dummy');
-
     const [ratings, setRatings] = useState<any[]>([]);
     const [showBookingModal, setShowBookingModal] = useState(false);
+    const [bookingTutorName, setBookingTutorName] = useState<string>(''); // Captured when modal opens
+
+    // Pause polling when modal is open to prevent remounting the modal
+    const { data: tutor, loading } = useDocument<User>('users', tutorId || 'dummy', {
+        pausePolling: showBookingModal
+    });
 
     useEffect(() => {
         if (tutorId && tutor && user) {
@@ -67,6 +68,10 @@ function TutorProfileContent() {
             return;
         }
 
+        // Capture tutorName ONCE when modal opens - prevents re-renders from polling
+        if (tutor?.tutorProfile) {
+            setBookingTutorName(`${tutor.tutorProfile.firstName} ${tutor.tutorProfile.lastName}`);
+        }
         setShowBookingModal(true);
     };
 
@@ -86,7 +91,7 @@ function TutorProfileContent() {
             const bookingId = await BookingService.createBooking({
                 studentId: user.uid,
                 tutorId: tutorId,
-                date: Timestamp.fromDate(bookingData.date),
+                date: { toDate: () => bookingData.date } as any, // REST-compatible format
                 startTime: bookingData.startTime,
                 endTime: endTime,
                 duration: bookingData.duration,
@@ -328,12 +333,13 @@ function TutorProfileContent() {
                     </div>
                 </div>
 
-                {/* Booking Modal */}
+                {/* Booking Modal - Only depends on stable values to prevent re-mounting */}
                 {
-                    showBookingModal && tutor?.tutorProfile && tutorId && (
+                    showBookingModal && tutorId && (
                         <BookingModal
+                            key="booking-modal"
                             tutorId={tutorId}
-                            tutorName={`${tutor.tutorProfile.firstName} ${tutor.tutorProfile.lastName}`}
+                            tutorName={bookingTutorName}
                             onClose={() => setShowBookingModal(false)}
                             onBook={handleCreateBooking}
                         />

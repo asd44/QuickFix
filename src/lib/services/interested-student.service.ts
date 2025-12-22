@@ -1,5 +1,4 @@
-import { collection, addDoc, getDocs, query, where, serverTimestamp, Timestamp, onSnapshot } from 'firebase/firestore';
-import { db } from '@/lib/firebase/config';
+import { FirestoreREST } from '@/lib/firebase/nativeFirestore';
 import { InterestedStudent } from '@/lib/types/database';
 import { UserService } from './user.service';
 
@@ -14,63 +13,58 @@ export class InterestedStudentService {
         const student = await UserService.getUserById(studentId);
         if (!student?.studentProfile) return;
 
-        // Check if already tracked recently (within 24 hours)
-        const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-        const recentQuery = query(
-            collection(db, 'interestedStudents'),
-            where('tutorId', '==', tutorId),
-            where('studentId', '==', studentId),
-            where('action', '==', action),
-            where('timestamp', '>', Timestamp.fromDate(oneDayAgo))
-        );
+        // Use a deterministic document ID based on tutor-student pair
+        const docId = `${tutorId}_${studentId}`;
 
-        const existing = await getDocs(recentQuery);
-        if (!existing.empty) return; // Already tracked recently
+        // Check if document exists
+        const existingDoc = await FirestoreREST.getDoc<InterestedStudent>('interestedStudents', docId);
 
-        const interestData: Omit<InterestedStudent, 'id'> = {
-            tutorId,
-            studentId,
-            action,
-            timestamp: serverTimestamp() as Timestamp,
-            studentInfo: {
-                firstName: student.studentProfile.firstName,
-                grade: student.studentProfile.grade || '',
-                city: student.studentProfile.city,
-            },
-        };
+        if (existingDoc) {
+            // Update existing document - increment the count for this action
+            const currentCount = (existingDoc as any)[`${action}Count`] || 0;
+            const totalCount = existingDoc.totalCount || 0;
 
-        await addDoc(collection(db, 'interestedStudents'), interestData);
+            await FirestoreREST.updateDoc('interestedStudents', docId, {
+                lastTimestamp: FirestoreREST.serverTimestamp(),
+                [`${action}Count`]: currentCount + 1,
+                totalCount: totalCount + 1,
+            });
+        } else {
+            // Create new document with initial count
+            const interestData = {
+                tutorId,
+                studentId,
+                timestamp: FirestoreREST.serverTimestamp(),
+                lastTimestamp: FirestoreREST.serverTimestamp(),
+                [`${action}Count`]: 1,
+                totalCount: 1,
+                studentInfo: {
+                    firstName: student.studentProfile.firstName,
+                    grade: student.studentProfile.grade || '',
+                    city: student.studentProfile.city,
+                },
+            };
+            await FirestoreREST.setDoc('interestedStudents', docId, interestData);
+        }
     }
 
     // Get interested students for a tutor
     static async getInterestedStudents(tutorId: string, limit: number = 50): Promise<InterestedStudent[]> {
-        const q = query(
-            collection(db, 'interestedStudents'),
-            where('tutorId', '==', tutorId),
-            where('timestamp', '>', Timestamp.fromDate(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000))) // Last 30 days
-        );
+        const students = await FirestoreREST.query<InterestedStudent>('interestedStudents', {
+            where: [{ field: 'tutorId', op: 'EQUAL', value: tutorId }]
+        });
 
-        const snapshot = await getDocs(q);
-        return snapshot.docs
-            .map(doc => ({ id: doc.id, ...doc.data() } as InterestedStudent))
-            .sort((a, b) => b.timestamp.toMillis() - a.timestamp.toMillis())
+        return students
+            .sort((a, b) => ((b.lastTimestamp as any)?.seconds || 0) - ((a.lastTimestamp as any)?.seconds || 0))
             .slice(0, limit);
     }
 
-    // Listen to interested students in real-time
+    // Polling-based listener for interested students
     static listenToInterestedStudents(tutorId: string, callback: (students: InterestedStudent[]) => void, limitCount: number = 50): () => void {
-        const q = query(
-            collection(db, 'interestedStudents'),
-            where('tutorId', '==', tutorId),
-            where('timestamp', '>', Timestamp.fromDate(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000))) // Last 30 days
-        );
-
-        return onSnapshot(q, (snapshot) => {
-            const students = snapshot.docs
-                .map(doc => ({ id: doc.id, ...doc.data() } as InterestedStudent))
-                .sort((a, b) => b.timestamp.toMillis() - a.timestamp.toMillis())
-                .slice(0, limitCount);
-            callback(students);
-        });
+        this.getInterestedStudents(tutorId, limitCount).then(callback);
+        const interval = setInterval(() => {
+            this.getInterestedStudents(tutorId, limitCount).then(callback);
+        }, 10000);
+        return () => clearInterval(interval);
     }
 }

@@ -54,9 +54,14 @@ export default function TutorVerificationPage() {
 
             const urls = await Promise.all(uploadPromises);
 
-            // Update user profile with document URLs
-            await UserService.updateProfile(user.uid, {
-                'tutorProfile.verificationDocuments': urls,
+            // Update user profile with document URLs and set KYC status to pending
+            // Use nested object structure for proper Firestore storage
+            await UserService.updateTutorProfile(user.uid, {
+                verificationDocuments: urls,
+                kyc: {
+                    status: 'pending',
+                    submittedAt: new Date().toISOString(),
+                } as any  // Partial update, other fields preserved in Firestore
             });
 
             setSuccess('Documents uploaded successfully! Admin will review them soon.');

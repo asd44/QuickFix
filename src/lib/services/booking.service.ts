@@ -1,347 +1,154 @@
-import { collection, addDoc, query, where, getDocs, doc, updateDoc, serverTimestamp, Timestamp, orderBy as firestoreOrderBy, onSnapshot, getDoc, setDoc } from 'firebase/firestore';
-import { db } from '@/lib/firebase/config';
+import { FirestoreREST } from '@/lib/firebase/nativeFirestore';
 import { Booking } from '@/lib/types/database';
-
 import { CodeGenerator } from '@/lib/utils/code-generator';
 import { NotificationService } from '@/lib/services/notification.service';
+import { User } from '@/lib/types/database';
+
+// Helper to convert timestamp to Date (handles both Firebase Timestamp and plain object)
+const toDateSafe = (timestamp: any): Date => {
+    if (!timestamp) return new Date();
+    if (timestamp.toDate) return timestamp.toDate();
+    if (timestamp.seconds) return new Date(timestamp.seconds * 1000);
+    if (timestamp instanceof Date) return timestamp;
+    return new Date(timestamp);
+};
 
 export class BookingService {
     // Create a new booking
     static async createBooking(bookingData: Omit<Booking, 'id' | 'createdAt' | 'updatedAt'>): Promise<string> {
         console.log('BookingService.createBooking called with data:', bookingData);
 
-        // Normalize date to midnight to ensure consistency
-        const dateObj = bookingData.date.toDate();
+        // Normalize date to midnight - handle both Timestamp and Date objects
+        const dateObj = toDateSafe(bookingData.date);
         dateObj.setHours(0, 0, 0, 0);
-        const normalizedDate = Timestamp.fromDate(dateObj);
+        const normalizedDateSeconds = Math.floor(dateObj.getTime() / 1000);
 
-        // Construct Deterministic ID for duplicate prevention
-        // ID Format: bw_{tutorId}_{dateSeconds}_{startTime}
-        // This ensures that for a specific Tutor, Date, and Time, ONLY ONE booking can exist.
-        const bookingId = `bw_${bookingData.tutorId}_${normalizedDate.seconds}_${bookingData.startTime}`;
-        const bookingRef = doc(db, 'bookings', bookingId);
+        // Deterministic ID for duplicate prevention
+        const bookingId = `bw_${bookingData.tutorId}_${normalizedDateSeconds}_${bookingData.startTime}`;
 
-        // Check availability strictly by ID
-        const existingDoc = await getDoc(bookingRef);
-
-        if (existingDoc.exists()) {
-            const existingData = existingDoc.data();
-            // If the slot is taken and NOT cancelled, block it.
-            if (!['cancelled', 'rejected'].includes(existingData.status)) {
-                throw new Error('This time slot is already booked. Please select another time.');
-            }
-            // If it WAS cancelled, we can overwrite it (proceed to booking creation)
+        // Check availability
+        const existingDoc = await FirestoreREST.getDoc<Booking>('bookings', bookingId);
+        if (existingDoc && !['cancelled', 'rejected'].includes(existingDoc.status)) {
+            throw new Error('This time slot is already booked. Please select another time.');
         }
 
         const startCode = CodeGenerator.generateCompletionCode();
 
-        const booking: Omit<Booking, 'id'> = {
+        const booking = {
             ...bookingData,
-            date: normalizedDate,
+            date: { seconds: normalizedDateSeconds, nanoseconds: 0 },
             status: 'pending',
             paymentStatus: 'unpaid',
             startCode: startCode,
-            createdAt: serverTimestamp() as Timestamp,
-            updatedAt: serverTimestamp() as Timestamp,
+            createdAt: FirestoreREST.serverTimestamp(),
+            updatedAt: FirestoreREST.serverTimestamp(),
         };
 
-        console.log('Saving booking to Firestore with ID:', bookingId, booking);
-
-        // Use setDoc to create/overwrite at the specific ID
-        await setDoc(bookingRef, booking);
-
+        console.log('Saving booking to Firestore with ID:', bookingId);
+        await FirestoreREST.setDoc('bookings', bookingId, booking);
         console.log('Booking saved successfully');
 
-        // Notify Tutor (Non-blocking / Fire-and-forget)
+        // Notify Tutor (Fire-and-forget)
         NotificationService.sendNotification(
             bookingData.tutorId,
             'New Booking Request',
             `You have a new booking request from ${bookingData.studentName}`,
             { bookingId: bookingId, type: 'booking_request' }
-        ).catch(err => {
-            console.error('Failed to send background notification for booking:', bookingId, err);
-        });
+        ).catch(console.error);
 
         return bookingId;
     }
 
-    // Cache for user phone numbers to avoid repeated fetches
+    // Cache for user phone numbers
     private static phoneCache = new Map<string, string>();
-    private static phonePromises = new Map<string, Promise<string | undefined>>();
 
     private static async getPhoneNumber(userId: string): Promise<string | undefined> {
         if (this.phoneCache.has(userId)) return this.phoneCache.get(userId);
-        if (this.phonePromises.has(userId)) return this.phonePromises.get(userId);
 
-        const promise = (async () => {
-            try {
-                const snap = await getDoc(doc(db, 'users', userId));
-                const phone = snap.exists() ? snap.data().phoneNumber : undefined;
-                if (phone) this.phoneCache.set(userId, phone);
-                return phone;
-            } catch (e) {
-                console.error("Error fetching phone for", userId, e);
-                return undefined;
-            } finally {
-                this.phonePromises.delete(userId);
-            }
-        })();
-
-        this.phonePromises.set(userId, promise);
-        return promise;
+        try {
+            const user = await FirestoreREST.getDoc<User>('users', userId);
+            const phone = user?.phoneNumber;
+            if (phone) this.phoneCache.set(userId, phone);
+            return phone;
+        } catch (e) {
+            console.error("Error fetching phone for", userId, e);
+            return undefined;
+        }
     }
 
-    // Listens to a single booking in real-time
-    static listenToBooking(bookingId: string, callback: (booking: (Booking & { tutorPhoneNumber?: string; studentPhoneNumber?: string }) | null) => void): () => void {
-        const docRef = doc(db, 'bookings', bookingId);
-        let cachedTutorPhone: string | undefined;
-        let cachedStudentPhone: string | undefined;
-
-        return onSnapshot(docRef, async (docSnap: any) => {
-            if (docSnap.exists()) {
-                const data = docSnap.data();
-
-                // 1. Emit immediately with cached/current data (FAST UPDATE for status changes)
-                callback({
-                    id: docSnap.id,
-                    ...data,
-                    tutorPhoneNumber: cachedTutorPhone,
-                    studentPhoneNumber: cachedStudentPhone
-                } as Booking & { tutorPhoneNumber?: string; studentPhoneNumber?: string });
-
-                // 2. data fetching if missing (Eventual consistency)
-                let needsUpdate = false;
-                if (data.tutorId && !cachedTutorPhone) {
-                    cachedTutorPhone = await this.getPhoneNumber(data.tutorId);
-                    needsUpdate = true;
-                }
-                if (data.studentId && !cachedStudentPhone) {
-                    cachedStudentPhone = await this.getPhoneNumber(data.studentId);
-                    needsUpdate = true;
-                }
-
-                // 3. Emit again if we fetched new data
-                if (needsUpdate) {
-                    callback({
-                        id: docSnap.id,
-                        ...data,
-                        tutorPhoneNumber: cachedTutorPhone,
-                        studentPhoneNumber: cachedStudentPhone
-                    } as Booking & { tutorPhoneNumber?: string; studentPhoneNumber?: string });
-                }
-            } else {
-                callback(null);
-            }
-        });
-    }
-
-    // Get single booking by ID (Legacy one-time fetch)
+    // Get single booking by ID
     static async getBookingById(bookingId: string): Promise<(Booking & { tutorPhoneNumber?: string; studentPhoneNumber?: string }) | null> {
         try {
-            const docRef = doc(db, 'bookings', bookingId);
-            const docSnap = await getDoc(docRef);
+            const booking = await FirestoreREST.getDoc<Booking>('bookings', bookingId);
+            if (!booking) return null;
 
-            if (docSnap.exists()) {
-                const data = docSnap.data();
-                let tutorPhoneNumber: string | undefined;
-                let studentPhoneNumber: string | undefined;
+            let tutorPhoneNumber: string | undefined;
+            let studentPhoneNumber: string | undefined;
 
-                try {
-                    // Fetch Tutor Phone
-                    if (data.tutorId) {
-                        const tutorDocRef = doc(db, 'users', data.tutorId);
-                        const tutorDocSnap = await getDoc(tutorDocRef);
-                        if (tutorDocSnap.exists()) {
-                            tutorPhoneNumber = tutorDocSnap.data().phoneNumber;
-                        }
-                    }
-                    // Fetch Student Phone
-                    if (data.studentId) {
-                        const studentDocRef = doc(db, 'users', data.studentId);
-                        const studentDocSnap = await getDoc(studentDocRef);
-                        if (studentDocSnap.exists()) {
-                            studentPhoneNumber = studentDocSnap.data().phoneNumber;
-                        }
-                    }
-                } catch (error) {
-                    console.error('Error fetching user phone numbers:', error);
-                }
-
-                return {
-                    id: docSnap.id,
-                    ...data,
-                    tutorPhoneNumber,
-                    studentPhoneNumber
-                } as Booking & { tutorPhoneNumber?: string; studentPhoneNumber?: string };
+            try {
+                if (booking.tutorId) tutorPhoneNumber = await this.getPhoneNumber(booking.tutorId);
+                if (booking.studentId) studentPhoneNumber = await this.getPhoneNumber(booking.studentId);
+            } catch (error) {
+                console.error('Error fetching user phone numbers:', error);
             }
-            return null;
+
+            return { ...booking, tutorPhoneNumber, studentPhoneNumber };
         } catch (error) {
             console.error('Error fetching booking:', error);
             return null;
         }
     }
 
-    // Listens to student's bookings in real-time
-    static listenToStudentBookings(studentId: string, callback: (bookings: (Booking & { id: string, tutorPhoneNumber?: string })[]) => void): () => void {
-        const q = query(
-            collection(db, 'bookings'),
-            where('studentId', '==', studentId),
-            firestoreOrderBy('date', 'desc')
-        );
-
-        return onSnapshot(q, async (snapshot: any) => {
-            // First pass: Map docs to objects immediately
-            const bookings = snapshot.docs.map((docSnapshot: any) => ({
-                id: docSnapshot.id,
-                ...docSnapshot.data(),
-                tutorPhoneNumber: docSnapshot.data().tutorId ? this.phoneCache.get(docSnapshot.data().tutorId) : undefined
-            }));
-
-            // Emit immediate update
-            callback(bookings);
-
-            // Second pass: Fetch missing phones
-            let hasNewData = false;
-            await Promise.all(snapshot.docs.map(async (docSnapshot: any) => {
-                const data = docSnapshot.data();
-                if (data.tutorId && !this.phoneCache.has(data.tutorId)) {
-                    await this.getPhoneNumber(data.tutorId);
-                    hasNewData = true;
-                }
-            }));
-
-            // Emit update if cache was populated
-            if (hasNewData) {
-                const updatedBookings = snapshot.docs.map((docSnapshot: any) => ({
-                    id: docSnapshot.id,
-                    ...docSnapshot.data(),
-                    tutorPhoneNumber: docSnapshot.data().tutorId ? this.phoneCache.get(docSnapshot.data().tutorId) : undefined
-                }));
-                callback(updatedBookings);
-            }
-        });
-    }
-
-    // Listens to tutor's bookings in real-time
-    static listenToTutorBookings(tutorId: string, callback: (bookings: (Booking & { id: string; studentPhoneNumber?: string })[]) => void): () => void {
-        const q = query(
-            collection(db, 'bookings'),
-            where('tutorId', '==', tutorId),
-            firestoreOrderBy('date', 'desc')
-        );
-
-        return onSnapshot(q, async (snapshot: any) => {
-            // First pass: Map docs to objects immediately
-            const bookings = snapshot.docs.map((docSnapshot: any) => ({
-                id: docSnapshot.id,
-                ...docSnapshot.data(),
-                studentPhoneNumber: docSnapshot.data().studentId ? this.phoneCache.get(docSnapshot.data().studentId) : undefined
-            }));
-
-            // Emit immediate update
-            callback(bookings);
-
-            // Second pass: Fetch missing phones
-            let hasNewData = false;
-            await Promise.all(snapshot.docs.map(async (docSnapshot: any) => {
-                const data = docSnapshot.data();
-                if (data.studentId && !this.phoneCache.has(data.studentId)) {
-                    await this.getPhoneNumber(data.studentId);
-                    hasNewData = true;
-                }
-            }));
-
-            // Emit update if cache was populated
-            if (hasNewData) {
-                const updatedBookings = snapshot.docs.map((docSnapshot: any) => ({
-                    id: docSnapshot.id,
-                    ...docSnapshot.data(),
-                    studentPhoneNumber: docSnapshot.data().studentId ? this.phoneCache.get(docSnapshot.data().studentId) : undefined
-                }));
-                callback(updatedBookings);
-            }
-        });
-    }
-
-    // Get student's bookings (Legacy one-time fetch)
+    // Get student's bookings
     static async getStudentBookings(studentId: string): Promise<(Booking & { id: string, tutorPhoneNumber?: string })[]> {
         console.log('getStudentBookings called with studentId:', studentId);
 
-        const q = query(
-            collection(db, 'bookings'),
-            where('studentId', '==', studentId),
-            firestoreOrderBy('date', 'desc')
-        );
+        const bookings = await FirestoreREST.query<Booking>('bookings', {
+            where: [{ field: 'studentId', op: 'EQUAL', value: studentId }],
+            orderBy: [{ field: 'date', direction: 'DESCENDING' }]
+        });
 
-        console.log('Executing Firestore query for student...');
-        const snapshot = await getDocs(q);
-        console.log('Student query returned', snapshot.docs.length, 'documents');
-
-        const bookings = await Promise.all(snapshot.docs.map(async (docSnapshot) => {
-            const data = docSnapshot.data();
+        // Fetch phone numbers
+        const results = await Promise.all(bookings.map(async (booking) => {
             let tutorPhoneNumber: string | undefined;
-
-            try {
-                // Fetch tutor's phone number
-                if (data.tutorId) {
-                    const tutorDocRef = doc(db, 'users', data.tutorId);
-                    const tutorDocSnap = await import('firebase/firestore').then(mod => mod.getDoc(tutorDocRef));
-                    if (tutorDocSnap.exists()) {
-                        tutorPhoneNumber = tutorDocSnap.data().phoneNumber;
-                    }
-                }
-            } catch (error) {
-                console.error('Error fetching tutor phone number:', error);
+            if (booking.tutorId) {
+                tutorPhoneNumber = await this.getPhoneNumber(booking.tutorId);
             }
-
-            return {
-                id: docSnapshot.id,
-                ...data,
-                tutorPhoneNumber,
-            } as Booking & { id: string, tutorPhoneNumber?: string };
+            return { ...booking, tutorPhoneNumber };
         }));
 
-        return bookings;
+        return results;
     }
 
-    // Get tutor's bookings (Legacy one-time fetch)
+    // Polling-based listener for student bookings (call this with setInterval)
+    static async fetchStudentBookings(studentId: string): Promise<(Booking & { id: string, tutorPhoneNumber?: string })[]> {
+        return this.getStudentBookings(studentId);
+    }
+
+    // Get tutor's bookings
     static async getTutorBookings(tutorId: string): Promise<(Booking & { id: string; studentPhoneNumber?: string })[]> {
         console.log('getTutorBookings called with tutorId:', tutorId);
 
-        const q = query(
-            collection(db, 'bookings'),
-            where('tutorId', '==', tutorId),
-            firestoreOrderBy('date', 'desc')
-        );
+        const bookings = await FirestoreREST.query<Booking>('bookings', {
+            where: [{ field: 'tutorId', op: 'EQUAL', value: tutorId }],
+            orderBy: [{ field: 'date', direction: 'DESCENDING' }]
+        });
 
-        console.log('Executing Firestore query...');
-        const snapshot = await getDocs(q);
-        console.log('Query returned', snapshot.docs.length, 'documents');
-
-        const bookings = await Promise.all(snapshot.docs.map(async (docSnapshot) => {
-            const data = docSnapshot.data();
+        // Fetch phone numbers
+        const results = await Promise.all(bookings.map(async (booking) => {
             let studentPhoneNumber: string | undefined;
-
-            try {
-                if (data.studentId) {
-                    const studentDocRef = doc(db, 'users', data.studentId);
-                    const studentDocSnap = await import('firebase/firestore').then(mod => mod.getDoc(studentDocRef));
-                    if (studentDocSnap.exists()) {
-                        studentPhoneNumber = studentDocSnap.data().phoneNumber;
-                    }
-                }
-            } catch (error) {
-                console.error('Error fetching student phone number:', error);
+            if (booking.studentId) {
+                studentPhoneNumber = await this.getPhoneNumber(booking.studentId);
             }
-
-            return {
-                id: docSnapshot.id,
-                ...data,
-                studentPhoneNumber,
-            } as Booking & { id: string; studentPhoneNumber?: string };
+            return { ...booking, studentPhoneNumber };
         }));
 
-        return bookings;
+        return results;
+    }
+
+    // Polling-based listener for tutor bookings
+    static async fetchTutorBookings(tutorId: string): Promise<(Booking & { id: string; studentPhoneNumber?: string })[]> {
+        return this.getTutorBookings(tutorId);
     }
 
     // Update booking status
@@ -349,14 +156,11 @@ export class BookingService {
         bookingId: string,
         status: 'pending' | 'confirmed' | 'completed' | 'cancelled'
     ): Promise<void> {
-        // const { NotificationService } = await import('@/lib/services/notification.service');
-
-        // Fetch booking to get participants
         const booking = await this.getBookingById(bookingId);
 
-        await updateDoc(doc(db, 'bookings', bookingId), {
+        await FirestoreREST.updateDoc('bookings', bookingId, {
             status,
-            updatedAt: serverTimestamp(),
+            updatedAt: FirestoreREST.serverTimestamp(),
         });
 
         if (booking) {
@@ -380,18 +184,15 @@ export class BookingService {
 
     // Cancel booking
     static async cancelBooking(bookingId: string, reason?: string): Promise<void> {
-        // const { NotificationService } = await import('@/lib/services/notification.service');
         const booking = await this.getBookingById(bookingId);
 
-        await updateDoc(doc(db, 'bookings', bookingId), {
+        await FirestoreREST.updateDoc('bookings', bookingId, {
             status: 'cancelled',
             notes: reason ? `Cancelled: ${reason}` : 'Cancelled',
-            updatedAt: serverTimestamp(),
+            updatedAt: FirestoreREST.serverTimestamp(),
         });
 
         if (booking) {
-            // Notify both parties just in case
-            // Fire-and-forget notifications
             Promise.all([
                 NotificationService.sendNotification(
                     booking.tutorId,
@@ -405,7 +206,7 @@ export class BookingService {
                     `Your booking with ${booking.tutorName} was cancelled.`,
                     { bookingId, type: 'booking_cancelled' }
                 )
-            ]).catch(err => console.error('Error sending cancellation notifications:', err));
+            ]).catch(console.error);
         }
     }
 
@@ -417,116 +218,84 @@ export class BookingService {
     ): Promise<void> {
         const updateData: any = {
             paymentStatus,
-            updatedAt: serverTimestamp(),
+            updatedAt: FirestoreREST.serverTimestamp(),
         };
 
-        if (paymentIntentId) {
-            updateData.paymentIntentId = paymentIntentId;
-        }
+        if (paymentIntentId) updateData.paymentIntentId = paymentIntentId;
+        if (paymentStatus === 'paid') updateData.status = 'confirmed';
 
-        // If payment is successful, also confirm the booking
-        if (paymentStatus === 'paid') {
-            updateData.status = 'confirmed';
-        }
-
-        await updateDoc(doc(db, 'bookings', bookingId), updateData);
+        await FirestoreREST.updateDoc('bookings', bookingId, updateData);
     }
 
-    // Get bookings for a specific date range
-    static async getBookedSlots(
-        tutorId: string,
-        date: Date
-    ): Promise<string[]> {
-        // Normalize date to midnight
+    // Get booked slots for a date
+    static async getBookedSlots(tutorId: string, date: Date): Promise<string[]> {
         const startDate = new Date(date);
         startDate.setHours(0, 0, 0, 0);
-        const endDate = new Date(startDate);
-        endDate.setHours(23, 59, 59, 999);
+        const dateSeconds = Math.floor(startDate.getTime() / 1000);
 
-        const startTimestamp = Timestamp.fromDate(startDate);
-        // Note: We use the stored normalized date for exact match if possible,
-        // but range query is safer if time components vary slightly.
-        // However, we store as normalized midnight date, so exact match on 'date' field should work perfectly
-        // if we match how we save it.
-        // Let's use exact match on the normalized date provided it matches createBooking logic.
+        // Query bookings for this tutor and date
+        const bookings = await FirestoreREST.query<Booking>('bookings', {
+            where: [
+                { field: 'tutorId', op: 'EQUAL', value: tutorId },
+            ]
+        });
 
-        const q = query(
-            collection(db, 'bookings'),
-            where('tutorId', '==', tutorId),
-            where('date', '==', startTimestamp),
-            where('status', 'in', ['pending', 'confirmed', 'in_progress', 'completed'])
-        );
-
-        const snapshot = await getDocs(q);
-        const slots = snapshot.docs.map(doc => doc.data().startTime);
-        return slots;
+        // Filter by date and status client-side (REST API doesn't support IN operator well)
+        const activeStatuses = ['pending', 'confirmed', 'in_progress', 'completed'];
+        return bookings
+            .filter(b => {
+                const bookingDateSeconds = (b.date as any)?.seconds || 0;
+                return bookingDateSeconds === dateSeconds && activeStatuses.includes(b.status);
+            })
+            .map(b => b.startTime);
     }
 
-    // Get bookings for a specific date range
+    // Get bookings for date range
     static async getBookingsForDateRange(
         tutorId: string,
         startDate: Date,
         endDate: Date
     ): Promise<(Booking & { id: string })[]> {
-        const q = query(
-            collection(db, 'bookings'),
-            where('tutorId', '==', tutorId),
-            where('date', '>=', startDate),
-            where('date', '<=', endDate)
-        );
+        const bookings = await FirestoreREST.query<Booking>('bookings', {
+            where: [{ field: 'tutorId', op: 'EQUAL', value: tutorId }]
+        });
 
-        const snapshot = await getDocs(q);
-        return snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data(),
-        } as Booking & { id: string }));
+        const startSeconds = Math.floor(startDate.getTime() / 1000);
+        const endSeconds = Math.floor(endDate.getTime() / 1000);
+
+        return bookings.filter(b => {
+            const dateSeconds = (b.date as any)?.seconds || 0;
+            return dateSeconds >= startSeconds && dateSeconds <= endSeconds;
+        });
     }
 
     // Start job with verification code
     static async startJobWithCode(bookingId: string, code: string): Promise<string> {
-        // const { CodeGenerator } = await import('@/lib/utils/code-generator');
+        const booking = await this.getBookingById(bookingId);
+        if (!booking) throw new Error('Booking not found');
 
-        // Get booking to validate code
-        const bookingRef = doc(db, 'bookings', bookingId);
-        const bookingSnap = await getDocs(query(collection(db, 'bookings'), where('__name__', '==', bookingId)));
-
-        if (bookingSnap.empty) {
-            throw new Error('Booking not found');
-        }
-
-        const booking = bookingSnap.docs[0].data() as Booking;
-
-        // Validate start code
-        if (!booking.startCode) {
-            // Fallback for old bookings without start code
-            console.warn('No start code found for booking, allowing start without code');
-        } else if (!CodeGenerator.validateCode(code, booking.startCode)) {
+        if (booking.startCode && !CodeGenerator.validateCode(code, booking.startCode)) {
             throw new Error('Invalid start code. Please ask customer for the correct code.');
         }
 
         const completionCode = CodeGenerator.generateCompletionCode();
         const expiresAt = CodeGenerator.getExpirationTime();
 
-        await updateDoc(bookingRef, {
+        await FirestoreREST.updateDoc('bookings', bookingId, {
             status: 'in_progress',
-            jobStartedAt: serverTimestamp(),
+            jobStartedAt: FirestoreREST.serverTimestamp(),
             completionCode: completionCode,
-            codeExpiresAt: Timestamp.fromDate(expiresAt),
+            codeExpiresAt: { seconds: Math.floor(expiresAt.getTime() / 1000), nanoseconds: 0 },
             codeAttempts: 0,
-            updatedAt: serverTimestamp(),
+            updatedAt: FirestoreREST.serverTimestamp(),
         });
 
-        // Notify Student
-        try {
-            NotificationService.sendNotification(
-                booking.studentId,
-                'Job Started',
-                `Your service with ${booking.tutorName} has started!`,
-                { bookingId, type: 'job_started' }
-            ).catch(console.error);
-        } catch (e) {
-            console.error("Failed to notify student of job start", e);
-        }
+        NotificationService.sendNotification(
+            booking.studentId,
+            'Job Started',
+            `Your service with ${booking.tutorName} has started!`,
+            { bookingId, type: 'job_started' }
+        ).catch(console.error);
 
         return completionCode;
     }
@@ -538,28 +307,18 @@ export class BookingService {
         amount: number,
         details: string
     ): Promise<void> {
-        // const { CodeGenerator } = await import('@/lib/utils/code-generator');
+        const booking = await this.getBookingById(bookingId);
+        if (!booking) throw new Error('Booking not found');
 
-        // Get booking to validate code
-        const bookingRef = doc(db, 'bookings', bookingId);
-        const bookingSnap = await getDocs(query(collection(db, 'bookings'), where('__name__', '==', bookingId)));
-
-        if (bookingSnap.empty) {
-            throw new Error('Booking not found');
-        }
-
-        const booking = bookingSnap.docs[0].data() as Booking;
-
-        // Validate code
         if (!booking.completionCode) {
             throw new Error('No completion code found. Please start the job first.');
         }
 
         if (!CodeGenerator.validateCode(code, booking.completionCode)) {
             const attempts = (booking.codeAttempts || 0) + 1;
-            await updateDoc(bookingRef, {
+            await FirestoreREST.updateDoc('bookings', bookingId, {
                 codeAttempts: attempts,
-                updatedAt: serverTimestamp()
+                updatedAt: FirestoreREST.serverTimestamp()
             });
 
             if (attempts >= 3) {
@@ -568,58 +327,46 @@ export class BookingService {
             throw new Error(`Invalid completion code. ${3 - attempts} attempts remaining.`);
         }
 
-        // Check expiration
-        if (booking.codeExpiresAt && CodeGenerator.isExpired(booking.codeExpiresAt.toDate())) {
+        if (booking.codeExpiresAt && CodeGenerator.isExpired(new Date((booking.codeExpiresAt as any).seconds * 1000))) {
             throw new Error('Completion code expired. Please ask customer to regenerate code.');
         }
 
-        // Validate amount
-        if (amount <= 0) {
-            throw new Error('Bill amount must be greater than 0');
-        }
+        if (amount <= 0) throw new Error('Bill amount must be greater than 0');
 
-        // Update booking with completion details
-        await updateDoc(bookingRef, {
+        await FirestoreREST.updateDoc('bookings', bookingId, {
             status: 'completed',
-            jobCompletedAt: serverTimestamp(),
+            jobCompletedAt: FirestoreREST.serverTimestamp(),
             finalBillAmount: amount,
             billDetails: details,
-            billSubmittedAt: serverTimestamp(),
+            billSubmittedAt: FirestoreREST.serverTimestamp(),
             finalPaymentStatus: 'pending',
-            updatedAt: serverTimestamp(),
+            updatedAt: FirestoreREST.serverTimestamp(),
         });
 
-        // Notify Student
-        try {
-            NotificationService.sendNotification(
-                booking.studentId,
-                'Job Completed',
-                `Your service is complete. Final Bill: ₹${amount}`,
-                { bookingId, type: 'job_completed' }
-            ).catch(console.error);
-        } catch (e) {
-            console.error("Failed to notify student of completion", e);
-        }
+        NotificationService.sendNotification(
+            booking.studentId,
+            'Job Completed',
+            `Your service is complete. Final Bill: ₹${amount}`,
+            { bookingId, type: 'job_completed' }
+        ).catch(console.error);
     }
 
-    // Regenerate completion code (if expired or forgotten)
+    // Regenerate completion code
     static async regenerateCompletionCode(bookingId: string): Promise<string> {
-        // const { CodeGenerator } = await import('@/lib/utils/code-generator');
-
         const newCode = CodeGenerator.generateCompletionCode();
         const expiresAt = CodeGenerator.getExpirationTime();
 
-        await updateDoc(doc(db, 'bookings', bookingId), {
+        await FirestoreREST.updateDoc('bookings', bookingId, {
             completionCode: newCode,
-            codeExpiresAt: Timestamp.fromDate(expiresAt),
+            codeExpiresAt: { seconds: Math.floor(expiresAt.getTime() / 1000), nanoseconds: 0 },
             codeAttempts: 0,
-            updatedAt: serverTimestamp(),
+            updatedAt: FirestoreREST.serverTimestamp(),
         });
 
         return newCode;
     }
 
-    // Update final payment status (after Razorpay payment)
+    // Update final payment status
     static async updateFinalPaymentStatus(
         bookingId: string,
         paymentId: string,
@@ -628,23 +375,53 @@ export class BookingService {
         const updateData: any = {
             finalPaymentId: paymentId,
             finalPaymentStatus: status,
-            updatedAt: serverTimestamp(),
+            updatedAt: FirestoreREST.serverTimestamp(),
         };
 
         if (status === 'completed') {
-            updateData.paidAt = serverTimestamp();
+            updateData.paidAt = FirestoreREST.serverTimestamp();
         }
 
-        await updateDoc(doc(db, 'bookings', bookingId), updateData);
+        await FirestoreREST.updateDoc('bookings', bookingId, updateData);
     }
 
     // Mark final bill as paid in cash
     static async markFinalBillPaidInCash(bookingId: string): Promise<void> {
-        await updateDoc(doc(db, 'bookings', bookingId), {
+        await FirestoreREST.updateDoc('bookings', bookingId, {
             finalPaymentStatus: 'completed',
             paymentMethod: 'cash',
-            paidAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
+            paidAt: FirestoreREST.serverTimestamp(),
+            updatedAt: FirestoreREST.serverTimestamp(),
         });
+    }
+
+    // Legacy listener methods - now use polling approach
+    // Components should use useEffect + setInterval to call fetch methods instead
+    static listenToBooking(bookingId: string, callback: (booking: any) => void): () => void {
+        // Initial fetch
+        this.getBookingById(bookingId).then(callback);
+
+        // Poll every 5 seconds
+        const interval = setInterval(() => {
+            this.getBookingById(bookingId).then(callback);
+        }, 5000);
+
+        return () => clearInterval(interval);
+    }
+
+    static listenToStudentBookings(studentId: string, callback: (bookings: any[]) => void): () => void {
+        this.getStudentBookings(studentId).then(callback);
+        const interval = setInterval(() => {
+            this.getStudentBookings(studentId).then(callback);
+        }, 5000);
+        return () => clearInterval(interval);
+    }
+
+    static listenToTutorBookings(tutorId: string, callback: (bookings: any[]) => void): () => void {
+        this.getTutorBookings(tutorId).then(callback);
+        const interval = setInterval(() => {
+            this.getTutorBookings(tutorId).then(callback);
+        }, 5000);
+        return () => clearInterval(interval);
     }
 }

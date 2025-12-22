@@ -13,6 +13,15 @@ import { BackHeader } from '@/components/BackHeader';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ChatService } from '@/lib/services/chat.service';
 
+// Helper to safely convert timestamp to Date (handles both Firebase Timestamp and plain objects)
+function toDateSafe(timestamp: any): Date {
+    if (!timestamp) return new Date();
+    if (timestamp instanceof Date) return timestamp;
+    if (timestamp.toDate) return timestamp.toDate();
+    if (timestamp.seconds) return new Date(timestamp.seconds * 1000);
+    return new Date(timestamp);
+}
+
 export default function TutorBookingsPage() {
     const { user, userData } = useAuth();
     const router = useRouter();
@@ -188,11 +197,11 @@ export default function TutorBookingsPage() {
         return booking.status === filter;
     }).sort((a, b) => {
         if (filter === 'pending') {
-            const createdA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
-            const createdB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
+            const createdA = toDateSafe(a.createdAt).getTime();
+            const createdB = toDateSafe(b.createdAt).getTime();
             return createdB - createdA;
         }
-        const getTime = (b: Booking) => b.date?.toDate ? b.date.toDate().getTime() : 0;
+        const getTime = (b: Booking) => toDateSafe(b.date).getTime();
         return getTime(b) - getTime(a);
     });
 
@@ -324,15 +333,15 @@ export default function TutorBookingsPage() {
                                             <div className="flex items-center gap-3 my-2">
                                                 <div className="w-10 h-10 rounded-lg bg-[#5A0E24]/10 flex flex-col items-center justify-center text-[#5A0E24]">
                                                     <span className="text-[9px] uppercase font-bold">
-                                                        {format(booking.date.toDate(), 'MMM')}
+                                                        {format(toDateSafe(booking.date), 'MMM')}
                                                     </span>
                                                     <span className="text-lg font-bold leading-none">
-                                                        {format(booking.date.toDate(), 'dd')}
+                                                        {format(toDateSafe(booking.date), 'dd')}
                                                     </span>
                                                 </div>
                                                 <div>
                                                     <p className="font-semibold text-sm text-gray-900">
-                                                        {format(booking.date.toDate(), 'EEEE')}
+                                                        {format(toDateSafe(booking.date), 'EEEE')}
                                                     </p>
                                                     <p className="text-xs text-gray-500">
                                                         {booking.startTime}

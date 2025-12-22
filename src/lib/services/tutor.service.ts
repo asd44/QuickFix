@@ -1,6 +1,5 @@
-import { collection, query, where, getDocs, orderBy, limit as firestoreLimit, startAfter, QueryConstraint, doc, updateDoc, setDoc } from 'firebase/firestore';
-import { db } from '@/lib/firebase/config';
-import { User, TutorSearchFilters } from '@/lib/types/database';
+import { FirestoreREST, QueryFilter } from '@/lib/firebase/nativeFirestore';
+import { User, TutorSearchFilters, TutorProfile } from '@/lib/types/database';
 
 export class TutorService {
     // Search tutors with filters
@@ -8,44 +7,67 @@ export class TutorService {
         filters: TutorSearchFilters = {},
         limit: number = 20
     ): Promise<{ tutors: User[]; lastDoc: any }> {
-        const constraints: any[] = [
-            where('role', '==', 'tutor'),
-            where('tutorProfile.verified', '==', true),
-            // IMPORTANT: Only show tutors with active subscriptions
-            where('tutorProfile.subscription.status', '==', 'active'),
+        // Only use simple field queries that work with REST API
+        // Nested field queries like tutorProfile.verified don't work correctly
+        const whereFilters: QueryFilter[] = [
+            { field: 'role', op: 'EQUAL', value: 'tutor' },
         ];
 
-        // Apply filters
+        // Fetch all tutors first
+        let tutors = await FirestoreREST.query<User>('users', {
+            where: whereFilters,
+            limit: 100 // Fetch more, filter client-side
+        });
+
+        console.log('[TutorService] Raw tutors fetched:', tutors.length);
+
+        // Client-side filtering for verified and subscription status
+        tutors = tutors.filter(t => {
+            const profile = t.tutorProfile;
+            if (!profile) return false;
+
+            // Must be verified
+            if (!profile.verified) {
+                console.log('[TutorService] Filtering out unverified:', t.uid);
+                return false;
+            }
+
+            // Must have active subscription
+            if (profile.subscription?.status !== 'active') {
+                console.log('[TutorService] Filtering out no subscription:', t.uid, profile.subscription?.status);
+                return false;
+            }
+
+            // Must not be deactivated or suspended
+            if (profile.isActivated === false || profile.isSuspended) return false;
+
+            return true;
+        });
+
+        console.log('[TutorService] After filtering:', tutors.length);
+
+        // Apply additional filters client-side
         if (filters.subject) {
-            constraints.push(where('tutorProfile.subjects', 'array-contains', filters.subject));
+            tutors = tutors.filter(t => t.tutorProfile?.subjects?.includes(filters.subject!));
         }
 
         if (filters.grade) {
-            constraints.push(where('tutorProfile.grades', 'array-contains', filters.grade));
+            tutors = tutors.filter(t => t.tutorProfile?.grades?.includes(filters.grade!));
         }
 
         if (filters.city) {
-            constraints.push(where('tutorProfile.city', '==', filters.city));
+            tutors = tutors.filter(t => t.tutorProfile?.city === filters.city);
         }
 
         if (filters.gender) {
-            constraints.push(where('tutorProfile.gender', '==', filters.gender));
+            tutors = tutors.filter(t => t.tutorProfile?.gender === filters.gender);
         }
 
         if (filters.teachingType) {
-            constraints.push(where('tutorProfile.teachingType', 'array-contains', filters.teachingType));
+            tutors = tutors.filter(t => t.tutorProfile?.teachingType?.includes(filters.teachingType!));
         }
 
-        // Price range filtering (done client-side since Firestore can't do range queries with other filters)
-        // constraints.push(orderBy('tutorProfile.averageRating', 'desc')); // Removed to show all providers
-        constraints.push(firestoreLimit(limit));
-
-        const q = query(collection(db, 'users'), ...constraints);
-        const snapshot = await getDocs(q);
-
-        let tutors = snapshot.docs.map(doc => doc.data() as User);
-
-        // Client-side price filtering
+        // Price filtering
         if (filters.minPrice !== undefined || filters.maxPrice !== undefined) {
             tutors = tutors.filter(tutor => {
                 const rate = tutor.tutorProfile?.hourlyRate || 0;
@@ -55,55 +77,56 @@ export class TutorService {
             });
         }
 
-        const lastDoc = snapshot.docs[snapshot.docs.length - 1];
-
-        // Filter out deactivated profiles (client-side to support legacy data where field is missing)
-        tutors = tutors.filter(t => t.tutorProfile?.isActivated !== false);
-
-        return { tutors, lastDoc };
+        return { tutors: tutors.slice(0, limit), lastDoc: null };
     }
 
     // Get featured tutors (for homepage)
     static async getFeaturedTutors(limit: number = 6): Promise<User[]> {
-        const q = query(
-            collection(db, 'users'),
-            where('role', '==', 'tutor'),
-            where('tutorProfile.verified', '==', true),
-            where('tutorProfile.subscription.status', '==', 'active'), // Only active subscribers
-            // orderBy('tutorProfile.averageRating', 'desc'), // Removed to show all providers even if rating is missing
-            firestoreLimit(50) // Fetch more to allow for client-side filtering of deactivated profiles
-        );
+        const tutors = await FirestoreREST.query<User>('users', {
+            where: [
+                { field: 'role', op: 'EQUAL', value: 'tutor' },
+            ],
+            limit: 100
+        });
 
-        const snapshot = await getDocs(q);
-        const tutors = snapshot.docs.map(doc => doc.data() as User);
-
-        // Filter out deactivated profiles and return requested limit
-        return tutors.filter(t => t.tutorProfile?.isActivated !== false).slice(0, limit);
+        // Client-side filtering for verified, subscription, and activation status
+        return tutors.filter(t => {
+            const profile = t.tutorProfile;
+            if (!profile) return false;
+            if (!profile.verified) return false;
+            if (profile.subscription?.status !== 'active') return false;
+            if (profile.isActivated === false || profile.isSuspended) return false;
+            return true;
+        }).slice(0, limit);
     }
 
     // Get top rated tutors (rating >= 4)
     static async getTopRatedTutors(limit: number = 6): Promise<User[]> {
-        const q = query(
-            collection(db, 'users'),
-            where('role', '==', 'tutor'),
-            where('tutorProfile.verified', '==', true),
-            where('tutorProfile.subscription.status', '==', 'active'),
-            where('tutorProfile.averageRating', '>=', 4),
-            orderBy('tutorProfile.averageRating', 'desc'),
-            firestoreLimit(limit * 2) // Fetch more to allow for client-side filtering
-        );
+        const tutors = await FirestoreREST.query<User>('users', {
+            where: [
+                { field: 'role', op: 'EQUAL', value: 'tutor' },
+            ],
+            limit: 100
+        });
 
-        const snapshot = await getDocs(q);
-        const tutors = snapshot.docs.map(doc => doc.data() as User);
-
-        // Filter out deactivated profiles and return requested limit
-        return tutors.filter(t => t.tutorProfile?.isActivated !== false).slice(0, limit);
+        // Client-side filtering and sorting
+        return tutors
+            .filter(t => {
+                const profile = t.tutorProfile;
+                if (!profile) return false;
+                if (!profile.verified) return false;
+                if (profile.subscription?.status !== 'active') return false;
+                if (profile.isActivated === false || profile.isSuspended) return false;
+                if ((profile.averageRating || 0) < 4) return false;
+                return true;
+            })
+            .sort((a, b) => (b.tutorProfile?.averageRating || 0) - (a.tutorProfile?.averageRating || 0))
+            .slice(0, limit);
     }
+
     // Update tutor profile
-    static async updateTutorProfile(uid: string, profile: Partial<import('@/lib/types/database').TutorProfile>): Promise<void> {
-        await setDoc(doc(db, 'users', uid), {
-            tutorProfile: profile,
-        }, { merge: true });
+    static async updateTutorProfile(uid: string, profile: Partial<TutorProfile>): Promise<void> {
+        await FirestoreREST.updateDoc('users', uid, { tutorProfile: profile });
     }
 
     // Submit KYC Documents
@@ -117,7 +140,7 @@ export class TutorService {
         const idUrl = await StorageService.uploadVerificationDocument(userId, data.idFile);
 
         // 3. Update User Profile
-        await updateDoc(doc(db, 'users', userId), {
+        await FirestoreREST.updateDoc('users', userId, {
             'tutorProfile.kyc': {
                 status: 'pending',
                 submittedAt: new Date().toISOString(),
@@ -126,27 +149,30 @@ export class TutorService {
                 idType: data.idType,
                 idNumber: data.idNumber
             },
-            'tutorProfile.verificationDocuments': [idUrl, selfieUrl], // For backward compatibility / legacy admin check
+            'tutorProfile.verificationDocuments': [idUrl, selfieUrl],
             'tutorProfile.verified': false
         });
     }
+
     // Toggle profile activation status
     static async toggleProfileStatus(uid: string, isActivated: boolean): Promise<void> {
-        await updateDoc(doc(db, 'users', uid), {
+        await FirestoreREST.updateDoc('users', uid, {
             'tutorProfile.isActivated': isActivated
         });
     }
+
     // Toggle profile suspension status (Admin only)
     static async toggleSuspensionStatus(uid: string, isSuspended: boolean): Promise<void> {
-        await updateDoc(doc(db, 'users', uid), {
+        const updates: any = {
             'tutorProfile.isSuspended': isSuspended,
-            // If suspended, deactivate visibility. If unsuspended (reactivated), make visible again.
             'tutorProfile.isActivated': !isSuspended,
-            // Ensure subscription is active and profile is verified if reactivating
-            ...(isSuspended ? {} : {
-                'tutorProfile.subscription.status': 'active',
-                'tutorProfile.verified': true
-            })
-        });
+        };
+
+        if (!isSuspended) {
+            updates['tutorProfile.subscription.status'] = 'active';
+            updates['tutorProfile.verified'] = true;
+        }
+
+        await FirestoreREST.updateDoc('users', uid, updates);
     }
 }

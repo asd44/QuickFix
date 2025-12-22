@@ -2,8 +2,7 @@
 
 import { useEffect, useState, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { db } from '@/lib/firebase/config';
-import { doc, getDoc, updateDoc } from 'firebase/firestore';
+import { FirestoreREST } from '@/lib/firebase/nativeFirestore';
 import { User } from '@/lib/types/database';
 import { Button } from '@/components/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/Card';
@@ -22,10 +21,9 @@ function VerificationDetailsContent() {
         const fetchProvider = async () => {
             if (!userId) return;
             try {
-                const docRef = doc(db, 'users', userId);
-                const docSnap = await getDoc(docRef);
-                if (docSnap.exists()) {
-                    setProvider(docSnap.data() as User);
+                const userData = await FirestoreREST.getDoc<User>('users', userId);
+                if (userData) {
+                    setProvider(userData);
                 } else {
                     console.error("Provider not found");
                 }
@@ -51,15 +49,23 @@ function VerificationDetailsContent() {
         if (!provider || !userId || !actionType) return;
         setProcessing(true);
         try {
-            const userRef = doc(db, 'users', userId);
-            await updateDoc(userRef, {
-                'tutorProfile.verified': actionType === 'approved',
-                'tutorProfile.kyc.status': actionType,
-                'tutorProfile.kyc.rejectionReason': actionType === 'rejected' ? 'Documents did not match criteria.' : null
-            });
+            // Use proper nested object structure for update
+            const updateData: any = {
+                tutorProfile: {
+                    verified: actionType === 'approved',
+                    kyc: {
+                        status: actionType,
+                        ...(actionType === 'rejected' && { rejectionReason: 'Documents did not match criteria.' })
+                    }
+                }
+            };
+
+            await FirestoreREST.updateDoc('users', userId, updateData);
+            console.log('[VerificationView] Updated provider:', userId, 'status:', actionType);
             router.push('/admin');
         } catch (error) {
             console.error("Error updating verification status:", error);
+            alert('Failed to update verification status. Please try again.');
         } finally {
             setProcessing(false);
             setShowConfirm(false);
@@ -150,7 +156,29 @@ function VerificationDetailsContent() {
                                 <CardTitle>KYC Documents</CardTitle>
                             </CardHeader>
                             <CardContent className="space-y-4 pt-0">
-                                {kyc ? (
+                                {/* Show verificationDocuments array if available */}
+                                {provider.tutorProfile?.verificationDocuments && provider.tutorProfile.verificationDocuments.length > 0 ? (
+                                    <div className="space-y-4">
+                                        <label className="text-sm text-gray-600 mb-1 block">Uploaded Documents</label>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            {provider.tutorProfile.verificationDocuments.map((url, index) => (
+                                                <div key={index} className="relative h-32 rounded-lg overflow-hidden border border-gray-200 bg-gray-50">
+                                                    {url.toLowerCase().includes('.pdf') ? (
+                                                        <div className="w-full h-full flex items-center justify-center bg-gray-100">
+                                                            <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline text-sm">
+                                                                📄 View PDF
+                                                            </a>
+                                                        </div>
+                                                    ) : (
+                                                        <a href={url} target="_blank" rel="noopener noreferrer">
+                                                            <img src={url} alt={`Document ${index + 1}`} className="object-cover w-full h-full" />
+                                                        </a>
+                                                    )}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ) : kyc?.photoUrl || kyc?.idProofUrl ? (
                                     <>
                                         <div>
                                             <label className="text-sm text-gray-600 mb-1 block">Selfie / Photo</label>
@@ -187,27 +215,30 @@ function VerificationDetailsContent() {
                                             <label className="text-sm text-gray-600 mb-1 block">ID Number</label>
                                             <p className="font-medium text-gray-900">{kyc.idNumber || "Not provided"}</p>
                                         </div>
-
-                                        <div className="pt-4 flex gap-4">
-                                            <Button
-                                                onClick={() => initiateAction('approved')}
-                                                disabled={processing}
-                                                className="flex-1 bg-green-600 hover:bg-green-700 text-white"
-                                            >
-                                                Approve
-                                            </Button>
-                                            <Button
-                                                onClick={() => initiateAction('rejected')}
-                                                disabled={processing}
-                                                variant="destructive"
-                                                className="flex-1"
-                                            >
-                                                Reject
-                                            </Button>
-                                        </div>
                                     </>
                                 ) : (
-                                    <p className="text-yellow-600">No KYC data submitted.</p>
+                                    <p className="text-yellow-600">No documents submitted yet.</p>
+                                )}
+
+                                {/* Always show approval buttons for unverified providers */}
+                                {!provider.tutorProfile?.verified && (
+                                    <div className="pt-4 flex gap-4 border-t mt-4">
+                                        <Button
+                                            onClick={() => initiateAction('approved')}
+                                            disabled={processing}
+                                            className="flex-1 bg-green-600 hover:bg-green-700 text-white"
+                                        >
+                                            Approve
+                                        </Button>
+                                        <Button
+                                            onClick={() => initiateAction('rejected')}
+                                            disabled={processing}
+                                            variant="destructive"
+                                            className="flex-1"
+                                        >
+                                            Reject
+                                        </Button>
+                                    </div>
                                 )}
                             </CardContent>
                         </Card>

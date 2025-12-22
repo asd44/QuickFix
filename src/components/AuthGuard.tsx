@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter, usePathname } from 'next/navigation';
+import { Capacitor } from '@capacitor/core';
 
 const PUBLIC_PATHS = ['/auth/login', '/auth/signup', '/auth/admin/login', '/manifest.json', '/icon-192.png', '/icon-512.png', '/welcome'];
 
@@ -12,6 +13,10 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     const { user, userData, loading, signOut } = useAuth();
     const router = useRouter();
     const pathname = usePathname();
+
+    // Native Capacitor Firebase auth check
+    const [nativeUser, setNativeUser] = useState<{ uid: string; email?: string | null; phoneNumber?: string | null } | null>(null);
+    const [checkingNativeAuth, setCheckingNativeAuth] = useState(Capacitor.isNativePlatform());
 
     // State for complaint form - ALWAYS Call Hooks at Top Level
     const [complaintForm, setComplaintForm] = useState({ mobile: '', description: '' });
@@ -46,61 +51,150 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
         }
     };
 
+    // Check for Capacitor native Firebase auth (for OTP verification flow)
+    // Also listen for auth state changes to clear nativeUser on signout
     useEffect(() => {
-        if (loading) return;
+        let authListener: any = null;
+
+        const checkNativeAuth = async () => {
+            if (Capacitor.isNativePlatform()) {
+                try {
+                    const { FirebaseAuthentication } = await import('@capacitor-firebase/authentication');
+
+                    // Check current user
+                    const result = await FirebaseAuthentication.getCurrentUser();
+                    console.log('[AuthGuard] Native auth check:', result);
+                    if (result.user) {
+                        setNativeUser({
+                            uid: result.user.uid,
+                            email: result.user.email,
+                            phoneNumber: result.user.phoneNumber
+                        });
+                    } else {
+                        setNativeUser(null);
+                    }
+
+                    // Listen for auth state changes (signout, etc.)
+                    authListener = await FirebaseAuthentication.addListener('authStateChange', (event) => {
+                        console.log('[AuthGuard] Native auth state changed:', event);
+                        if (event.user) {
+                            setNativeUser({
+                                uid: event.user.uid,
+                                email: event.user.email,
+                                phoneNumber: event.user.phoneNumber
+                            });
+                        } else {
+                            setNativeUser(null);
+                        }
+                    });
+
+                } catch (error) {
+                    console.error('[AuthGuard] Native auth check error:', error);
+                }
+            }
+            setCheckingNativeAuth(false);
+        };
+        checkNativeAuth();
+
+        return () => {
+            if (authListener) {
+                authListener.remove();
+            }
+        };
+    }, []);
+
+    // Effective user check - web SDK user OR Capacitor native user
+    const effectiveUser = user || nativeUser;
+    const isAuthLoading = loading || checkingNativeAuth;
+
+    useEffect(() => {
+        console.log('[AuthGuard] Effect triggered:', { loading, checkingNativeAuth, hasUser: !!user, hasNativeUser: !!nativeUser, hasUserData: !!userData, pathname });
+
+        if (isAuthLoading) {
+            console.log('[AuthGuard] Still loading auth state');
+            return;
+        }
 
         // On first load, if user exists but has no profile (incomplete signup), log them out
         if (isFirstLoad.current) {
             isFirstLoad.current = false;
-            // Only redirect if we are NOT already on the signup page
-            // But user requested: "if user closes the app... takes back to the role selection page"
-            // So if they just opened the app and have incomplete profile, we should reset.
-            if (user && !userData) {
-                signOut().then(() => {
-                    router.replace('/welcome');
-                });
-                return;
-            }
+            console.log('[AuthGuard] First load complete');
+            // DISABLED: Don't sign out on first load - let OTP users complete signup
+            // if (user && !userData) {
+            //     signOut().then(() => {
+            //         router.replace('/welcome');
+            //     });
+            //     return;
+            // }
         }
 
-        // 1. Unauthenticated User
-        if (!user) {
+        // 1. Unauthenticated User (neither web SDK nor native user)
+        if (!effectiveUser) {
+            console.log('[AuthGuard] No user (web or native), checking pathname:', pathname);
             // If trying to access protected route, redirect to welcome
             if (!PUBLIC_PATHS.includes(pathname)) {
+                console.log('[AuthGuard] Redirecting to welcome - no user on protected route');
                 router.push('/welcome');
             }
             return;
         }
 
-        // 2. Authenticated but Incomplete Profile
-        if (user && !userData) {
+        // 2. Authenticated but Incomplete Profile  
+        // (Has user from web SDK or native, but no Firestore profile)
+        if (effectiveUser && !userData) {
+            console.log('[AuthGuard] User authenticated but no profile data');
+
+            // Skip redirect for admin login page - admins use email auth and should have profiles
+            // Also skip for /admin path - allow admins to access while their data loads
+            const isAdminPath = pathname.startsWith('/admin') || pathname === '/auth/admin/login';
+
+            // If user has email (admin), wait for data instead of redirecting to signup
+            // Phone auth users (customers/providers) go to signup
+            if (effectiveUser.email && !effectiveUser.phoneNumber) {
+                console.log('[AuthGuard] Email user (likely admin), waiting for data to load...');
+                // Don't redirect - let data load
+                return;
+            }
+
             // Force to signup page if not already there, BUT skip if on login page (to allow OTPLogin to handle redirect with role)
-            if (pathname !== '/auth/signup' && pathname !== '/auth/login') {
-                router.push('/auth/signup');
+            if (pathname !== '/auth/signup' && pathname !== '/auth/login' && !isAdminPath) {
+                console.log('[AuthGuard] Redirecting to signup');
+                // Preserve role parameter from current URL if present
+                const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
+                const role = urlParams?.get('role');
+                const signupUrl = role ? `/auth/signup?role=${role}` : '/auth/signup';
+                router.push(signupUrl);
+            } else {
+                console.log('[AuthGuard] Already on signup/login/admin, allowing access');
             }
             return;
         }
 
         // 3. Authenticated and Complete Profile
         if (user && userData) {
+            console.log('[AuthGuard] User authenticated with profile data');
             // If on login or signup page, redirect to dashboard
-            if (pathname === '/auth/login' || pathname === '/auth/signup' || pathname === '/auth/admin/login' || pathname === '/welcome') {
+            // NOTE: Don't redirect from welcome - let users re-login with different role if they sign out first
+            if (pathname === '/auth/login' || pathname === '/auth/signup' || pathname === '/auth/admin/login') {
                 if (userData.role === 'admin') {
+                    console.log('[AuthGuard] Redirecting admin to dashboard');
                     router.push('/admin');
                 } else {
+                    console.log('[AuthGuard] Redirecting user to home');
                     router.push('/');
                 }
             }
 
             // If admin tries to access root, redirect to admin dashboard
             if (userData.role === 'admin' && pathname === '/') {
+                console.log('[AuthGuard] Redirecting admin from root to admin dashboard');
                 router.push('/admin');
             }
         }
-    }, [user, userData, loading, pathname, router, signOut]);
+    }, [user, userData, loading, pathname, router, signOut, effectiveUser, isAuthLoading, nativeUser, checkingNativeAuth]);
 
-    // Show loading spinner while checking auth state
-    if (loading) {
+    // Show loading spinner while checking auth state (web SDK or native)
+    if (isAuthLoading) {
         return (
             <div className="min-h-screen flex items-center justify-center bg-background">
                 <div className="flex flex-col items-center gap-4">
@@ -113,8 +207,20 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 
     // State for complaint form
     // Don't render children if redirecting (prevent flash of content)
-    if (!user && !PUBLIC_PATHS.includes(pathname)) return null;
-    if (user && !userData && pathname !== '/auth/signup') return null;
+    console.log('[AuthGuard] Render check:', { effectiveUser: !!effectiveUser, pathname, isPublic: PUBLIC_PATHS.includes(pathname), userData: !!userData });
+    if (!effectiveUser && !PUBLIC_PATHS.includes(pathname)) {
+        console.log('[AuthGuard] Blocking render - no user on non-public path');
+        return null;
+    }
+
+    // For email users (admin), allow access to admin paths while data loads
+    const isEmailUser = effectiveUser?.email && !effectiveUser?.phoneNumber;
+    const isAdminPath = pathname.startsWith('/admin') || pathname === '/auth/admin/login';
+
+    if (effectiveUser && !userData && pathname !== '/auth/signup' && pathname !== '/auth/login' && !isAdminPath && !isEmailUser) {
+        console.log('[AuthGuard] Blocking render - phone user with no data on non-signup path');
+        return null;
+    }
 
     // Check for suspension (Admin Deactivation)
     // Only block if user is logged in, has data, and is marked suspended.

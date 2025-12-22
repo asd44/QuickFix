@@ -128,8 +128,13 @@ export interface InterestedStudent {
     id: string;
     tutorId: string;
     studentId: string;
-    action: 'profile_view' | 'search_result' | 'marked_interested';
-    timestamp: Timestamp;
+    timestamp: Timestamp;        // First interaction time
+    lastTimestamp: Timestamp;    // Most recent interaction time
+    // Count fields for each action type
+    profile_viewCount?: number;
+    search_resultCount?: number;
+    marked_interestedCount?: number;
+    totalCount: number;
     studentInfo: {
         firstName: string;
         grade: string;

@@ -2,18 +2,29 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/Button';
 import { CustomSelect } from '@/components/CustomSelect';
 import { UserRole, User } from '@/lib/types/database';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '@/lib/firebase/config';
+import { FirestoreREST, NativeAuth } from '@/lib/firebase/nativeFirestore';
+import { Capacitor } from '@capacitor/core';
+import { Suspense } from 'react';
 
-export default function SignupPage() {
+function SignupContent() {
     const { user, userData, loading: authLoading, signOut } = useAuth();
     const router = useRouter();
+    const searchParams = useSearchParams();
 
-    const [role, setRole] = useState<UserRole>('student');
+    // Read role from URL - use useSearchParams for proper Next.js handling
+    const urlRole = searchParams.get('role');
+    const [role, setRole] = useState<UserRole>(() => {
+        // Initialize from URL param if available
+        if (urlRole === 'tutor' || urlRole === 'student') {
+            return urlRole;
+        }
+        return 'student';
+    });
+
     const [firstName, setFirstName] = useState('');
     const [lastName, setLastName] = useState('');
     const [gender, setGender] = useState('');
@@ -23,17 +34,41 @@ export default function SignupPage() {
     const [loading, setLoading] = useState(false);
     const [detectingLocation, setDetectingLocation] = useState(false);
 
+    // Native Capacitor Firebase user (for when web SDK auth isn't synced)
+    const [nativeUser, setNativeUser] = useState<{ uid: string; phoneNumber: string | null } | null>(null);
+    const [checkingNativeAuth, setCheckingNativeAuth] = useState(Capacitor.isNativePlatform());
+
     const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
 
+    // Update role if URL param changes
     useEffect(() => {
-        const params = new URLSearchParams(window.location.search);
-        const initialRole = params.get('role');
-        if (initialRole === 'tutor' || initialRole === 'student') {
-            setRole(initialRole);
-        } else {
-            // Fallback if no role is picked
-            setRole('student');
+        if (urlRole === 'tutor' || urlRole === 'student') {
+            console.log('[SignupPage] Setting role from URL:', urlRole);
+            setRole(urlRole);
         }
+    }, [urlRole]);
+
+    // Check for native Capacitor Firebase user (web SDK auth may not be synced)
+    useEffect(() => {
+        const checkNativeAuth = async () => {
+            if (Capacitor.isNativePlatform()) {
+                try {
+                    const { FirebaseAuthentication } = await import('@capacitor-firebase/authentication');
+                    const result = await FirebaseAuthentication.getCurrentUser();
+                    console.log('[SignupPage] Native user check:', result);
+                    if (result.user) {
+                        setNativeUser({
+                            uid: result.user.uid,
+                            phoneNumber: result.user.phoneNumber || null
+                        });
+                    }
+                } catch (error) {
+                    console.error('[SignupPage] Native auth check error:', error);
+                }
+            }
+            setCheckingNativeAuth(false);
+        };
+        checkNativeAuth();
     }, []);
 
     const SERVICE_CATEGORIES = [
@@ -106,7 +141,10 @@ export default function SignupPage() {
         setError('');
         setLoading(true);
 
-        if (!user) {
+        // Use web user or native user
+        const currentUser = user || nativeUser;
+
+        if (!currentUser) {
             setError('No authenticated user found');
             setLoading(false);
             return;
@@ -118,13 +156,39 @@ export default function SignupPage() {
             return;
         }
 
+        // If using native user but no web SDK auth, try to sync web SDK
+        if (!user && nativeUser && Capacitor.isNativePlatform()) {
+            console.log('[SignupPage] No web SDK auth, attempting sync from native...');
+            try {
+                const { FirebaseAuthentication } = await import('@capacitor-firebase/authentication');
+                const { signInWithCredential, PhoneAuthProvider } = await import('firebase/auth');
+                const { auth } = await import('@/lib/firebase/config');
+
+                // Get ID token and use it to verify auth
+                const idTokenResult = await FirebaseAuthentication.getIdToken();
+                console.log('[SignupPage] Got ID token:', !!idTokenResult.token);
+
+                // Wait for web SDK to pick up the auth state
+                if (!auth.currentUser) {
+                    console.log('[SignupPage] Waiting for web SDK auth to sync...');
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+
+                if (auth.currentUser) {
+                    console.log('[SignupPage] Web SDK auth synced successfully');
+                }
+            } catch (syncError) {
+                console.log('[SignupPage] Web SDK sync attempt failed:', syncError);
+            }
+        }
+
         try {
             const userDoc: User = {
-                uid: user.uid,
+                uid: currentUser.uid,
                 email: '', // Phone auth users don't have email
-                phoneNumber: user.phoneNumber || '',
+                phoneNumber: currentUser.phoneNumber || '',
                 role,
-                createdAt: serverTimestamp() as any,
+                createdAt: FirestoreREST.serverTimestamp() as any,
                 ...(role === 'student' && {
                     studentProfile: {
                         firstName,
@@ -140,14 +204,14 @@ export default function SignupPage() {
                         firstName,
                         lastName,
                         bio: '',
-                        subjects: selectedCategories, // Use selected categories
+                        subjects: selectedCategories,
                         grades: [],
                         hourlyRate: 0,
                         experience: 0,
                         teachingType: [],
-                        gender: '', // Removed from form
+                        gender: '',
                         city,
-                        area: '', // Removed from form
+                        area: '',
                         verified: false,
                         verificationDocuments: [],
                         averageRating: 0,
@@ -164,17 +228,54 @@ export default function SignupPage() {
                 }),
             };
 
-            await setDoc(doc(db, 'users', user.uid), userDoc);
+            // Use FirestoreREST for profile creation (native-only)
+            console.log('[SignupPage] Creating profile via REST API...');
+            const success = await FirestoreREST.setDoc('users', currentUser.uid, userDoc);
+
+            if (!success) {
+                throw new Error('Failed to create profile. Please try again.');
+            }
+
+            console.log('[SignupPage] Profile created successfully!');
 
             // Redirect to dashboard
-            router.push('/');
+            window.location.href = '/';
         } catch (err: any) {
             setError(err.message || 'Failed to create profile');
             setLoading(false);
         }
     };
 
-    if (authLoading || !user) {
+    // Check if authenticated user already has a complete profile
+    useEffect(() => {
+        console.log('[SignupPage] useEffect:', { authLoading, hasUser: !!user, hasUserData: !!userData, hasNativeUser: !!nativeUser });
+        if (!authLoading && user && userData) {
+            // User is authenticated AND has profile data - redirect to home
+            console.log('[SignupPage] Has profile, redirecting to home');
+            router.push('/');
+        }
+    }, [authLoading, user, userData, router, nativeUser]);
+
+    // Use web user first, fall back to native user
+    const effectiveUser = user || nativeUser;
+    const isLoading = authLoading || checkingNativeAuth;
+
+    console.log('[SignupPage] Render:', { authLoading, checkingNativeAuth, hasUser: !!user, hasNativeUser: !!nativeUser, effectiveUser: !!effectiveUser });
+
+    // Show loading while checking auth state
+    if (isLoading) {
+        console.log('[SignupPage] Showing loading spinner');
+        return (
+            <div className="min-h-screen flex items-center justify-center">
+                <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+            </div>
+        );
+    }
+
+    // If no user at all (neither web nor native), redirect to login
+    if (!effectiveUser) {
+        console.log('[SignupPage] No user found, redirecting to login');
+        router.push('/auth/login');
         return (
             <div className="min-h-screen flex items-center justify-center">
                 <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
@@ -361,5 +462,17 @@ export default function SignupPage() {
                 </form>
             </div>
         </div>
+    );
+}
+
+export default function SignupPage() {
+    return (
+        <Suspense fallback={
+            <div className="min-h-screen flex items-center justify-center">
+                <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+            </div>
+        }>
+            <SignupContent />
+        </Suspense>
     );
 }

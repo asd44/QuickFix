@@ -1,5 +1,4 @@
-import { collection, addDoc, getDocs, doc, updateDoc, query, where, serverTimestamp, Timestamp, getDoc } from 'firebase/firestore';
-import { db } from '@/lib/firebase/config';
+import { FirestoreREST } from '@/lib/firebase/nativeFirestore';
 import { Subscription } from '@/lib/types/database';
 
 export class SubscriptionService {
@@ -15,27 +14,41 @@ export class SubscriptionService {
         const endDate = new Date();
         endDate.setDate(endDate.getDate() + duration);
 
-        const subscriptionData: Omit<Subscription, 'id'> = {
+        const subscriptionData = {
             tutorId,
             plan,
             amount,
             status: 'active',
             paymentMethod,
-            startDate: Timestamp.fromDate(startDate),
-            endDate: Timestamp.fromDate(endDate),
+            startDate: { seconds: Math.floor(startDate.getTime() / 1000), nanoseconds: 0 },
+            endDate: { seconds: Math.floor(endDate.getTime() / 1000), nanoseconds: 0 },
         };
 
-        await addDoc(collection(db, 'subscriptions'), subscriptionData);
-
-        // Update tutor profile
-        await updateDoc(doc(db, 'users', tutorId), {
-            'tutorProfile.subscription': {
-                plan,
-                status: 'active',
-                startDate: Timestamp.fromDate(startDate),
-                endDate: Timestamp.fromDate(endDate),
-            },
+        // Check for existing subscription and update instead of creating new
+        const existing = await FirestoreREST.query<Subscription & { id: string }>('subscriptions', {
+            where: [{ field: 'tutorId', op: 'EQUAL', value: tutorId }]
         });
+
+        if (existing.length > 0) {
+            // Update existing subscription
+            await FirestoreREST.updateDoc('subscriptions', existing[0].id, subscriptionData);
+        } else {
+            await FirestoreREST.addDoc('subscriptions', subscriptionData);
+        }
+
+        // Update tutor profile using proper nested object structure
+        await FirestoreREST.updateDoc('users', tutorId, {
+            tutorProfile: {
+                subscription: {
+                    plan,
+                    status: 'active',
+                    startDate: subscriptionData.startDate,
+                    endDate: subscriptionData.endDate,
+                }
+            }
+        });
+
+        console.log('[SubscriptionService] Subscription created/updated for:', tutorId);
     }
 
     // Admin: Grant free subscription
@@ -49,131 +62,148 @@ export class SubscriptionService {
         const endDate = new Date();
         endDate.setDate(endDate.getDate() + customDuration);
 
-        const subscriptionData: Omit<Subscription, 'id'> = {
+        const subscriptionData = {
             tutorId,
             plan,
             amount: 0,
             status: 'active',
             paymentMethod: 'admin_granted',
-            startDate: Timestamp.fromDate(startDate),
-            endDate: Timestamp.fromDate(endDate),
+            startDate: { seconds: Math.floor(startDate.getTime() / 1000), nanoseconds: 0 },
+            endDate: { seconds: Math.floor(endDate.getTime() / 1000), nanoseconds: 0 },
         };
 
-        await addDoc(collection(db, 'subscriptions'), subscriptionData);
-
-        // Update tutor profile
-        await updateDoc(doc(db, 'users', tutorId), {
-            'tutorProfile.subscription': {
-                plan,
-                status: 'active',
-                startDate: Timestamp.fromDate(startDate),
-                endDate: Timestamp.fromDate(endDate),
-            },
+        // Check for existing subscription and update instead of creating new
+        const existing = await FirestoreREST.query<Subscription & { id: string }>('subscriptions', {
+            where: [{ field: 'tutorId', op: 'EQUAL', value: tutorId }]
         });
+
+        if (existing.length > 0) {
+            // Update existing subscription
+            await FirestoreREST.updateDoc('subscriptions', existing[0].id, subscriptionData);
+            console.log('[SubscriptionService] Updated existing subscription:', existing[0].id);
+        } else {
+            await FirestoreREST.addDoc('subscriptions', subscriptionData);
+            console.log('[SubscriptionService] Created new subscription for:', tutorId);
+        }
+
+        // Update tutor profile using proper nested object structure
+        await FirestoreREST.updateDoc('users', tutorId, {
+            tutorProfile: {
+                subscription: {
+                    plan,
+                    status: 'active',
+                    startDate: subscriptionData.startDate,
+                    endDate: subscriptionData.endDate,
+                }
+            }
+        });
+
+        console.log('[SubscriptionService] Subscription granted for:', tutorId);
     }
 
     // Admin: Disable subscription
     static async disableSubscription(tutorId: string): Promise<void> {
-        // Update all active subscriptions for this tutor
-        const q = query(
-            collection(db, 'subscriptions'),
-            where('tutorId', '==', tutorId),
-            where('status', '==', 'active')
-        );
-
-        const snapshot = await getDocs(q);
-        const updatePromises = snapshot.docs.map(doc =>
-            updateDoc(doc.ref, { status: 'expired' })
-        );
-
-        await Promise.all(updatePromises);
-
-        // Update tutor profile
-        await updateDoc(doc(db, 'users', tutorId), {
-            'tutorProfile.subscription.status': 'expired',
+        const subscriptions = await FirestoreREST.query<Subscription & { id: string }>('subscriptions', {
+            where: [
+                { field: 'tutorId', op: 'EQUAL', value: tutorId },
+                { field: 'status', op: 'EQUAL', value: 'active' }
+            ]
         });
+
+        await Promise.all(subscriptions.map(sub =>
+            FirestoreREST.updateDoc('subscriptions', sub.id, { status: 'expired' })
+        ));
+
+        // Use proper nested object structure
+        await FirestoreREST.updateDoc('users', tutorId, {
+            tutorProfile: {
+                subscription: {
+                    status: 'expired'
+                }
+            }
+        });
+
+        console.log('[SubscriptionService] Subscription disabled for:', tutorId);
     }
 
     // Admin: Enable/Reactivate subscription
     static async enableSubscription(tutorId: string, extendDays: number = 30): Promise<void> {
-        const userDoc = await getDoc(doc(db, 'users', tutorId));
-        const userData = userDoc.data();
-        const currentSubscription = userData?.tutorProfile?.subscription;
+        const user = await FirestoreREST.getDoc<any>('users', tutorId);
+        const currentSubscription = user?.tutorProfile?.subscription;
 
         const plan = currentSubscription?.plan || 'monthly';
         const startDate = new Date();
         const endDate = new Date();
         endDate.setDate(endDate.getDate() + extendDays);
 
-        const subscriptionData: Omit<Subscription, 'id'> = {
+        const subscriptionData = {
             tutorId,
             plan,
             amount: 0,
             status: 'active',
             paymentMethod: 'admin_enabled',
-            startDate: Timestamp.fromDate(startDate),
-            endDate: Timestamp.fromDate(endDate),
+            startDate: { seconds: Math.floor(startDate.getTime() / 1000), nanoseconds: 0 },
+            endDate: { seconds: Math.floor(endDate.getTime() / 1000), nanoseconds: 0 },
         };
 
-        await addDoc(collection(db, 'subscriptions'), subscriptionData);
-
-        // Update tutor profile
-        await updateDoc(doc(db, 'users', tutorId), {
-            'tutorProfile.subscription': {
-                plan,
-                status: 'active',
-                startDate: Timestamp.fromDate(startDate),
-                endDate: Timestamp.fromDate(endDate),
-            },
+        // Check for existing subscription and update instead of creating new
+        const existing = await FirestoreREST.query<Subscription & { id: string }>('subscriptions', {
+            where: [{ field: 'tutorId', op: 'EQUAL', value: tutorId }]
         });
+
+        if (existing.length > 0) {
+            await FirestoreREST.updateDoc('subscriptions', existing[0].id, subscriptionData);
+        } else {
+            await FirestoreREST.addDoc('subscriptions', subscriptionData);
+        }
+
+        // Use proper nested object structure
+        await FirestoreREST.updateDoc('users', tutorId, {
+            tutorProfile: {
+                subscription: {
+                    plan,
+                    status: 'active',
+                    startDate: subscriptionData.startDate,
+                    endDate: subscriptionData.endDate,
+                }
+            }
+        });
+
+        console.log('[SubscriptionService] Subscription enabled for:', tutorId);
     }
 
     // Get tutor's subscription history
     static async getTutorSubscriptions(tutorId: string): Promise<Subscription[]> {
-        const q = query(
-            collection(db, 'subscriptions'),
-            where('tutorId', '==', tutorId)
-        );
-
-        const snapshot = await getDocs(q);
-        return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Subscription));
+        return FirestoreREST.query<Subscription>('subscriptions', {
+            where: [{ field: 'tutorId', op: 'EQUAL', value: tutorId }]
+        });
     }
 
     // Get all active subscriptions (admin only)
     static async getAllActiveSubscriptions(): Promise<Subscription[]> {
-        const q = query(
-            collection(db, 'subscriptions'),
-            where('status', '==', 'active')
-        );
-
-        const snapshot = await getDocs(q);
-        return snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Subscription));
+        return FirestoreREST.query<Subscription>('subscriptions', {
+            where: [{ field: 'status', op: 'EQUAL', value: 'active' }]
+        });
     }
 
-    // Check and expire old subscriptions (should be run periodically)
+    // Check and expire old subscriptions
     static async expireOldSubscriptions(): Promise<void> {
-        const now = new Date();
-        const q = query(
-            collection(db, 'subscriptions'),
-            where('status', '==', 'active')
-        );
+        const nowSeconds = Math.floor(Date.now() / 1000);
 
-        const snapshot = await getDocs(q);
-        const expiredPromises = snapshot.docs
-            .filter(doc => {
-                const endDate = doc.data().endDate?.toDate();
-                return endDate && endDate < now;
-            })
-            .map(async (subscriptionDoc) => {
-                await updateDoc(subscriptionDoc.ref, { status: 'expired' });
+        const subscriptions = await FirestoreREST.query<Subscription & { id: string }>('subscriptions', {
+            where: [{ field: 'status', op: 'EQUAL', value: 'active' }]
+        });
 
-                // Update tutor profile
-                const tutorId = subscriptionDoc.data().tutorId;
-                await updateDoc(doc(db, 'users', tutorId), {
-                    'tutorProfile.subscription.status': 'expired',
-                });
+        const expiredSubs = subscriptions.filter(sub => {
+            const endSeconds = (sub.endDate as any)?.seconds || 0;
+            return endSeconds < nowSeconds;
+        });
+
+        await Promise.all(expiredSubs.map(async (sub) => {
+            await FirestoreREST.updateDoc('subscriptions', sub.id, { status: 'expired' });
+            await FirestoreREST.updateDoc('users', sub.tutorId, {
+                'tutorProfile.subscription.status': 'expired',
             });
-
-        await Promise.all(expiredPromises);
+        }));
     }
 }

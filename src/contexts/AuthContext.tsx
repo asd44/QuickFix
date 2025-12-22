@@ -1,181 +1,175 @@
 'use client';
 
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
-import {
-    User as FirebaseUser,
-    signOut as firebaseSignOut,
-    onAuthStateChanged,
-    RecaptchaVerifier,
-    signInWithPhoneNumber,
-    ConfirmationResult,
-} from 'firebase/auth';
-import { doc, getDoc, updateDoc, serverTimestamp, onSnapshot } from 'firebase/firestore';
-import { auth, db } from '@/lib/firebase/config';
+import { Capacitor } from '@capacitor/core';
+import { FirestoreREST, NativeAuth } from '@/lib/firebase/nativeFirestore';
 import { User } from '@/lib/types/database';
+import { signInWithEmailAndPassword } from 'firebase/auth';
+import { auth } from '@/lib/firebase/config';
+
+// Native user type from Capacitor Firebase
+interface NativeFirebaseUser {
+    uid: string;
+    phoneNumber: string | null;
+    displayName: string | null;
+    email: string | null;
+    photoUrl: string | null;
+}
 
 interface AuthContextType {
-    user: FirebaseUser | null;
+    user: NativeFirebaseUser | null;
     userData: User | null;
     loading: boolean;
-    signInWithPhone: (phoneNumber: string, appVerifier: RecaptchaVerifier) => Promise<void>;
-    signInWithEmail: (email: string, password: string) => Promise<void>;
-    verifyOTP: (otp: string) => Promise<boolean>;
     signOut: () => Promise<void>;
+    refreshUserData: () => Promise<void>;
+    signInWithEmail: (email: string, password: string) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-    const [user, setUser] = useState<FirebaseUser | null>(null);
+    const [user, setUser] = useState<NativeFirebaseUser | null>(null);
     const [userData, setUserData] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
-    const [confirmationResult, setConfirmationResult] = useState<ConfirmationResult | null>(null);
 
+    // Load auth state on mount and listen for changes
     useEffect(() => {
-        let unsubscribeUser: (() => void) | undefined;
+        let isMounted = true;
 
-        const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser) => {
-            setUser(firebaseUser);
+        const loadAuthState = async () => {
+            console.log('[AuthContext] Loading auth state...');
 
-            // Clean up previous user listener if exists
-            if (unsubscribeUser) {
-                unsubscribeUser();
-                unsubscribeUser = undefined;
+            if (!Capacitor.isNativePlatform()) {
+                // On web, check for web auth
+                console.log('[AuthContext] Web platform - checking web auth...');
+                const unsubscribe = auth.onAuthStateChanged(async (firebaseUser) => {
+                    if (isMounted) {
+                        if (firebaseUser) {
+                            setUser({
+                                uid: firebaseUser.uid,
+                                email: firebaseUser.email,
+                                phoneNumber: firebaseUser.phoneNumber,
+                                displayName: firebaseUser.displayName,
+                                photoUrl: firebaseUser.photoURL
+                            });
+                            // Load user data
+                            const data = await FirestoreREST.getDoc<User>('users', firebaseUser.uid);
+                            setUserData(data);
+                        } else {
+                            setUser(null);
+                            setUserData(null);
+                        }
+                        setLoading(false);
+                    }
+                });
+                return () => unsubscribe();
             }
 
-            if (firebaseUser) {
-                // Initialize Notifications
-                import('@/lib/services/notification.service').then(async ({ NotificationService }) => {
-                    try {
-                        const granted = await NotificationService.requestPermissions();
-                        if (granted) {
-                            NotificationService.registerListeners(firebaseUser.uid);
+            try {
+                const { FirebaseAuthentication } = await import('@capacitor-firebase/authentication');
+
+                // Get current user
+                const nativeUser = await NativeAuth.getCurrentUser();
+                console.log('[AuthContext] Native user:', nativeUser?.uid || 'none');
+
+                if (isMounted) {
+                    setUser(nativeUser as NativeFirebaseUser);
+                }
+
+                // Load user data if authenticated
+                if (nativeUser) {
+                    const data = await FirestoreREST.getDoc<User>('users', nativeUser.uid);
+                    console.log('[AuthContext] User data loaded:', data?.role || 'none');
+                    if (isMounted) {
+                        setUserData(data);
+                    }
+                }
+
+                // Listen for auth state changes
+                FirebaseAuthentication.addListener('authStateChange', async (event) => {
+                    console.log('[AuthContext] Auth state changed:', !!event.user);
+                    if (isMounted) {
+                        setUser(event.user as NativeFirebaseUser);
+
+                        if (event.user) {
+                            const data = await FirestoreREST.getDoc<User>('users', event.user.uid);
+                            setUserData(data);
+                        } else {
+                            setUserData(null);
                         }
-                        // 3. Listen to Firestore notifications (In-App & Local Bridge)
-                        const startTime = Date.now();
-                        let isFirstLoad = true;
-
-                        NotificationService.listenToNotifications(firebaseUser.uid, (notifications) => {
-                            // On subsequent updates, check for new items
-                            if (!isFirstLoad) {
-                                notifications.forEach(n => {
-                                    // Check if created recently (after we started listening)
-                                    // And assume it's new if we haven't seen it (simple approach: timestamp check)
-                                    const createdAt = n.createdAt?.toMillis ? n.createdAt.toMillis() : Date.now();
-                                    if (createdAt > startTime) {
-                                        // Show Local Notification!
-                                        NotificationService.showLocalNotification(n.title, n.body);
-                                    }
-                                });
-                            }
-                            isFirstLoad = false;
-                        });
-                    } catch (error) {
-                        console.error('Failed to init notifications:', error);
                     }
                 });
 
-                // Subscribe to user document changes
-                unsubscribeUser = onSnapshot(doc(db, 'users', firebaseUser.uid), (docSnapshot) => {
-                    if (docSnapshot.exists()) {
-                        setUserData(docSnapshot.data() as User);
-                    } else {
-                        setUserData(null);
-                    }
-                    setLoading(false);
-                }, (error) => {
-                    console.warn('Could not fetch user data from Firestore:', error);
-                    setUserData(null);
-                    setLoading(false);
-                });
-            } else {
-                setUserData(null);
+            } catch (error) {
+                console.error('[AuthContext] Error loading auth:', error);
+            }
+
+            if (isMounted) {
                 setLoading(false);
             }
-        });
+        };
 
-        // Cleanup subscription on unmount
+        loadAuthState();
+
         return () => {
-            unsubscribeAuth();
-            if (unsubscribeUser) unsubscribeUser();
+            isMounted = false;
         };
     }, []);
 
+    const signInWithEmail = async (email: string, password: string) => {
+        console.log('[AuthContext] Signing in with email...');
+        const credential = await signInWithEmailAndPassword(auth, email, password);
+
+        // Set user state
+        setUser({
+            uid: credential.user.uid,
+            email: credential.user.email,
+            phoneNumber: credential.user.phoneNumber,
+            displayName: credential.user.displayName,
+            photoUrl: credential.user.photoURL
+        });
+
+        // Load user data
+        const data = await FirestoreREST.getDoc<User>('users', credential.user.uid);
+        setUserData(data);
+        console.log('[AuthContext] Email sign-in successful, role:', data?.role);
+    };
+
     const signOut = async () => {
         try {
+            // Update last seen before signing out
             if (user) {
-                try {
-                    await updateDoc(doc(db, 'users', user.uid), {
-                        lastSeen: serverTimestamp(),
-                        isOnline: false
-                    });
-                } catch (firestoreError) {
-                    console.warn('Could not update user status during signout:', firestoreError);
-                }
+                await FirestoreREST.updateDoc('users', user.uid, {
+                    lastSeen: FirestoreREST.serverTimestamp(),
+                    isOnline: false
+                });
             }
-            await firebaseSignOut(auth);
+
+            // Sign out from both native and web
+            if (Capacitor.isNativePlatform()) {
+                await NativeAuth.signOut();
+            }
+            await auth.signOut();
+
             setUser(null);
             setUserData(null);
         } catch (error) {
-            console.error('Error signing out:', error);
-            throw error;
+            console.error('[AuthContext] Sign out error:', error);
         }
     };
 
-    const signInWithEmail = async (email: string, password: string) => {
-        try {
-            const { signInWithEmailAndPassword } = await import('firebase/auth');
-            await signInWithEmailAndPassword(auth, email, password);
-        } catch (error) {
-            console.error('Error signing in with email:', error);
-            throw error;
+    const refreshUserData = async () => {
+        if (user) {
+            const data = await FirestoreREST.getDoc<User>('users', user.uid);
+            setUserData(data);
         }
     };
 
-    const signInWithPhone = async (phoneNumber: string, appVerifier: RecaptchaVerifier) => {
-        try {
-            const confirmation = await signInWithPhoneNumber(auth, phoneNumber, appVerifier);
-            setConfirmationResult(confirmation);
-        } catch (error) {
-            console.error('Error sending OTP:', error);
-            throw error;
-        }
-    };
-
-    const verifyOTP = async (otp: string): Promise<boolean> => {
-        if (!confirmationResult) {
-            throw new Error('No OTP request found');
-        }
-        try {
-            const result = await confirmationResult.confirm(otp);
-            const user = result.user;
-
-            // Check if user document exists
-            const userDoc = await getDoc(doc(db, 'users', user.uid));
-
-            if (userDoc.exists()) {
-                setUserData(userDoc.data() as User);
-                return true; // User exists
-            } else {
-                return false; // User is new
-            }
-        } catch (error) {
-            console.error('Error verifying OTP:', error);
-            throw error;
-        }
-    };
-
-    const value = {
-        user,
-        userData,
-        loading,
-        signOut,
-        signInWithPhone,
-        signInWithEmail,
-        verifyOTP,
-    };
-
-    return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+    return (
+        <AuthContext.Provider value={{ user, userData, loading, signOut, refreshUserData, signInWithEmail }}>
+            {children}
+        </AuthContext.Provider>
+    );
 }
 
 export function useAuth() {
@@ -185,3 +179,4 @@ export function useAuth() {
     }
     return context;
 }
+

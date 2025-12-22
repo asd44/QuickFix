@@ -5,9 +5,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ChatService } from '@/lib/services/chat.service';
 import { UserService } from '@/lib/services/user.service';
-import { Message, User } from '@/lib/types/database';
-import { doc, getDoc, onSnapshot } from 'firebase/firestore';
-import { db } from '@/lib/firebase/config';
+import { Message, User, Booking, Chat } from '@/lib/types/database';
+import { FirestoreREST } from '@/lib/firebase/nativeFirestore';
 
 function ProviderChatContent() {
     const { user } = useAuth();
@@ -27,39 +26,37 @@ function ProviderChatContent() {
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const [isCreating, setIsCreating] = useState(false);
 
+    // Poll for booking status
     useEffect(() => {
-        // If we have a chatId, load metadata
-        if (chatId) {
-            const fetchChatMetadata = async () => {
-                try {
-                    const chatDoc = await getDoc(doc(db, 'chats', chatId));
-                    if (chatDoc.exists()) {
-                        const data = chatDoc.data();
-                        if (data.bookingId) {
-                            // Listen to Booking Status
-                            const unsubBooking = onSnapshot(doc(db, 'bookings', data.bookingId), (doc) => {
-                                if (doc.exists()) {
-                                    setBookingStatus(doc.data().status);
-                                }
-                            });
-                            return unsubBooking;
-                        }
-                    }
-                } catch (error) {
-                    console.error("Error fetching chat metadata", error);
+        let intervalId: NodeJS.Timeout;
+
+        const fetchBookingStatus = async (bookingId: string) => {
+            try {
+                const booking = await FirestoreREST.getDoc<Booking>('bookings', bookingId);
+                if (booking) {
+                    setBookingStatus(booking.status);
                 }
-            };
-            const unsubPromise = fetchChatMetadata();
-            return () => { unsubPromise.then(unsub => unsub && unsub()); };
-        } else if (bookingIdFromUrl) {
-            // New chat mode: Listen to booking status directly using URL param
-            const unsubBooking = onSnapshot(doc(db, 'bookings', bookingIdFromUrl), (doc) => {
-                if (doc.exists()) {
-                    setBookingStatus(doc.data().status);
-                }
-            });
-            return () => unsubBooking();
-        }
+            } catch (error) {
+                console.error("Error fetching booking status", error);
+            }
+        };
+
+        const initBookingPolling = async () => {
+            let targetBookingId = bookingIdFromUrl;
+
+            if (chatId && !targetBookingId) {
+                const chat = await FirestoreREST.getDoc<Chat>('chats', chatId);
+                targetBookingId = (chat as any)?.bookingId;
+            }
+
+            if (targetBookingId) {
+                fetchBookingStatus(targetBookingId);
+                intervalId = setInterval(() => fetchBookingStatus(targetBookingId!), 5000);
+            }
+        };
+
+        initBookingPolling();
+        return () => clearInterval(intervalId);
     }, [chatId, bookingIdFromUrl]);
 
     useEffect(() => {

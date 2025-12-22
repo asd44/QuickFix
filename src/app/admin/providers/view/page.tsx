@@ -1,9 +1,8 @@
 'use client';
 
 import { useEffect, useState, Suspense } from 'react';
-import { db } from '@/lib/firebase/config';
-import { doc, getDoc, collection, query, where, getDocs } from 'firebase/firestore';
-import { User } from '@/lib/types/database';
+import { FirestoreREST } from '@/lib/firebase/nativeFirestore';
+import { User, Booking } from '@/lib/types/database';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/Card';
@@ -31,33 +30,32 @@ function ProviderAnalyticsContent() {
         const fetchData = async () => {
             try {
                 // 1. Fetch Provider Details
-                const userDoc = await getDoc(doc(db, 'users', id));
-                if (userDoc.exists()) {
-                    const userData = userDoc.data() as User;
-                    setProvider(userData);
+                const userData = await FirestoreREST.getDoc<User>('users', id);
+                if (userData) {
+                    setProvider({ ...userData, uid: id });
                     setIsSuspended(userData.tutorProfile?.isSuspended ?? false);
                 }
 
                 // 2. Fetch Bookings for Stats
-                const bookingsQuery = query(collection(db, 'bookings'), where('tutorId', '==', id));
-                const bookingsSnap = await getDocs(bookingsQuery);
+                const bookings = await FirestoreREST.query<Booking & { id: string }>('bookings', {
+                    where: [{ field: 'tutorId', op: 'EQUAL', value: id }]
+                });
 
                 let earnings = 0;
                 let completed = 0;
 
-                bookingsSnap.forEach(bookingDoc => {
-                    const data = bookingDoc.data();
-                    if (data.status === 'completed') {
+                bookings.forEach(booking => {
+                    if (booking.status === 'completed') {
                         completed++;
-                        earnings += (data.finalBillAmount || data.totalPrice || 0);
+                        earnings += ((booking as any).finalBillAmount || booking.totalPrice || 0);
                     }
                 });
 
                 setStats({
-                    totalBookings: bookingsSnap.size,
+                    totalBookings: bookings.length,
                     completedBookings: completed,
                     totalEarnings: earnings,
-                    averageRating: (userDoc.data() as User)?.tutorProfile?.averageRating || 0
+                    averageRating: userData?.tutorProfile?.averageRating || 0
                 });
 
             } catch (error) {

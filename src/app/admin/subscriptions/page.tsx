@@ -130,7 +130,11 @@ export default function AdminSubscriptionsPage() {
                 {tutors.map((tutor) => {
                     const subscription = tutor.tutorProfile?.subscription;
                     const isActive = subscription?.status === 'active';
-                    const endDate = subscription?.endDate?.toDate();
+                    // Handle both Firebase Timestamp and plain object with seconds
+                    const endDateRaw = subscription?.endDate;
+                    const endDate = endDateRaw
+                        ? (endDateRaw.toDate ? endDateRaw.toDate() : new Date(endDateRaw.seconds * 1000))
+                        : null;
                     const daysRemaining = endDate ? Math.ceil((endDate.getTime() - Date.now()) / (1000 * 60 * 60 * 24)) : 0;
 
                     return (

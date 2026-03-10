@@ -52,7 +52,14 @@ export class StorageService {
 
         try {
             const { FirebaseAuthentication } = await import('@capacitor-firebase/authentication');
-            const result = await FirebaseAuthentication.getIdToken({ forceRefresh: true });
+            // Try to get current user first to ensure session exists
+            const currentUser = await FirebaseAuthentication.getCurrentUser();
+            if (!currentUser.user) {
+                console.warn('[StorageService] No native user found, cannot get ID token');
+                return null;
+            }
+
+            const result = await FirebaseAuthentication.getIdToken({ forceRefresh: false });
             return result.token || null;
         } catch (error) {
             console.error('[StorageService] Failed to get native ID token:', error);
@@ -61,7 +68,7 @@ export class StorageService {
     }
 
     // Ensure web SDK auth is ready (with timeout)
-    private static async waitForWebAuth(timeout = 1000): Promise<boolean> {
+    private static async waitForWebAuth(timeout = 2000): Promise<boolean> {
         if (auth.currentUser) {
             return true;
         }
@@ -82,9 +89,23 @@ export class StorageService {
     }
 
     // Upload file - tries web SDK first, falls back to REST API with native token
+    // Upload file - tries web SDK first, falls back to REST API with native token
     private static async uploadFile(path: string, file: File): Promise<string> {
+        // PRIORITIZE Native Auth on Native Platform to avoid flaky Web SDK auth state
+        if (Capacitor.isNativePlatform()) {
+            console.log('[StorageService] Native platform detected. Using Native Auth REST API...');
+            const idToken = await this.getNativeIdToken();
+            if (idToken) {
+                return await this.uploadWithNativeAuth(path, file, idToken);
+            } else {
+                console.error('[StorageService] Native auth failed (no token). Attempting Web SDK fallback...');
+                // If native token fails, fall through to Web SDK logic below, though unlikely to work.
+            }
+        }
+
         // First, try to wait for web SDK auth briefly
-        const hasWebAuth = await this.waitForWebAuth(500);
+        // Increased timeout to allow persistence to load
+        const hasWebAuth = await this.waitForWebAuth(2000);
 
         if (hasWebAuth) {
             // Use web SDK for upload
@@ -94,16 +115,8 @@ export class StorageService {
             return await getDownloadURL(storageRef);
         }
 
-        // No web auth, try native auth REST API approach
-        if (Capacitor.isNativePlatform()) {
-            const idToken = await this.getNativeIdToken();
-            if (idToken) {
-                return await this.uploadWithNativeAuth(path, file, idToken);
-            }
-        }
-
         // Last resort - try web SDK anyway (might work if rules allow)
-        console.log('[StorageService] Attempting web SDK upload without auth...');
+        console.log('[StorageService] Attempting web SDK upload without auth (Last Resort)...');
         const storageRef = ref(storage, path);
         await uploadBytes(storageRef, file);
         return await getDownloadURL(storageRef);

@@ -26,7 +26,7 @@ const toDateSafe = (timestamp: any): Date => {
 };
 
 export default function StudentBookingsPage() {
-    const { user } = useAuth();
+    const { user, userData } = useAuth();
     const router = useRouter();
     const [bookings, setBookings] = useState<(Booking & { id: string, tutorPhoneNumber?: string })[]>([]);
     const [loading, setLoading] = useState(true);
@@ -54,8 +54,11 @@ export default function StudentBookingsPage() {
     const handleCancelBooking = async (bookingId: string) => {
         if (!confirm('Are you sure you want to cancel this booking?')) return;
 
+        const name = userData?.studentProfile ? `${userData.studentProfile.firstName} ${userData.studentProfile.lastName}` : 'student';
+        const reason = `Cancelled by ${name}`;
+
         try {
-            await BookingService.cancelBooking(bookingId, 'Cancelled by student');
+            await BookingService.cancelBooking(bookingId, reason);
             // loadBookings(); // Auto-updated by listener
         } catch (error) {
             console.error('Failed to cancel booking:', error);
@@ -264,6 +267,11 @@ export default function StudentBookingsPage() {
                                         <div className="flex items-center gap-2 text-sm text-gray-500">
                                             <span>{booking.subject || 'General Service'}</span>
                                         </div>
+                                        {booking.status === 'cancelled' && booking.notes && (
+                                            <p className="text-xs text-red-500 mt-1 font-medium">
+                                                {booking.notes}
+                                            </p>
+                                        )}
                                     </div>
                                     <Badge
                                         variant={
@@ -385,7 +393,18 @@ export default function StudentBookingsPage() {
                                 )}
 
                                 {/* Footer Actions */}
-                                <div className="flex items-center gap-3 pt-2 border-t border-gray-50">
+                                <div className="flex items-center gap-3 pt-2 border-t border-gray-50 overflow-x-auto">
+                                    <Button
+                                        variant="outline"
+                                        className="flex-1 h-10 rounded-xl text-sm border-gray-200 text-[#005461] hover:bg-[#005461]/5"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            router.push(`/student/booking-details?id=${booking.id}`);
+                                        }}
+                                    >
+                                        <span className="mr-2">📄</span> Details
+                                    </Button>
+
                                     {(booking.status === 'confirmed' || booking.status === 'in_progress') && (
                                         <>
                                             <Button
@@ -413,7 +432,7 @@ export default function StudentBookingsPage() {
                                         </>
                                     )}
 
-                                    {booking.status === 'completed' && !booking.rated && (
+                                    {booking.status === 'completed' && !booking.rated && (typeof window !== 'undefined' && localStorage.getItem(`rated_${booking.id}`) !== 'true') && (
                                         <Button
                                             variant="outline"
                                             className="flex-1 h-10 rounded-xl text-sm border-yellow-200 text-yellow-700 hover:bg-yellow-50"
@@ -422,7 +441,7 @@ export default function StudentBookingsPage() {
                                                 handleOpenRatingModal(booking);
                                             }}
                                         >
-                                            <span className="mr-2">⭐</span> Rate Service
+                                            <span className="mr-2">⭐</span> Rate
                                         </Button>
                                     )}
 
@@ -435,7 +454,7 @@ export default function StudentBookingsPage() {
                                                 handleCancelBooking(booking.id);
                                             }}
                                         >
-                                            Cancel Request
+                                            Cancel
                                         </Button>
                                     )}
                                 </div>

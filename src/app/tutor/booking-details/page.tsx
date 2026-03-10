@@ -5,7 +5,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { BookingService } from '@/lib/services/booking.service';
 import { ChatService } from '@/lib/services/chat.service';
-import { Booking } from '@/lib/types/database';
+import { RatingService } from '@/lib/services/rating.service';
+import { Booking, Rating } from '@/lib/types/database';
 import { format } from 'date-fns';
 import { BackHeader } from '@/components/BackHeader';
 import { Button } from '@/components/Button';
@@ -21,7 +22,7 @@ function toDateSafe(timestamp: any): Date {
 }
 
 function BookingDetailsContent() {
-    const { user } = useAuth();
+    const { user, userData } = useAuth();
     const router = useRouter();
     const searchParams = useSearchParams();
     const bookingId = searchParams.get('id');
@@ -37,12 +38,26 @@ function BookingDetailsContent() {
     const [billDetails, setBillDetails] = useState('');
     const [startingJob, setStartingJob] = useState(false);
 
+    const [customerRating, setCustomerRating] = useState<Rating | null>(null);
+
     useEffect(() => {
         if (user?.uid && bookingId) {
             setLoading(true);
-            const unsubscribe = BookingService.listenToBooking(bookingId, (updatedBooking) => {
+            const unsubscribe = BookingService.listenToBooking(bookingId, async (updatedBooking) => {
                 if (updatedBooking) {
                     setBooking(updatedBooking);
+
+                    // Fetch rating if completed - Try even if 'rated' flag is missing (partial update resilience)
+                    if (updatedBooking.status === 'completed') {
+                        try {
+                            const rating = await RatingService.getRatingForSession(updatedBooking.id);
+                            if (rating) {
+                                setCustomerRating(rating);
+                            }
+                        } catch (error) {
+                            console.error('Failed to fetch rating:', error);
+                        }
+                    }
                 } else {
                     alert('Booking not found');
                     router.back();
@@ -86,8 +101,11 @@ function BookingDetailsContent() {
     const handleDeclineBooking = async () => {
         if (!booking) return;
         const reason = prompt('Reason for declining (optional):');
+        const name = userData?.tutorProfile ? `${userData.tutorProfile.firstName} ${userData.tutorProfile.lastName}` : 'tutor';
+        const finalReason = `Cancelled by ${name}${reason ? ': ' + reason : ''}`;
+
         try {
-            await BookingService.cancelBooking(booking.id, reason || 'Declined by tutor');
+            await BookingService.cancelBooking(booking.id, finalReason);
             router.back();
         } catch (error) {
             console.error('Failed to decline booking:', error);
@@ -103,8 +121,8 @@ function BookingDetailsContent() {
         }
 
         try {
-            const code = await BookingService.startJobWithCode(booking.id, startCode);
-            alert(`Job started! Customer's completion code: ${code}\n\nCustomer will share this code with you after work is done.`);
+            await BookingService.startJobWithCode(booking.id, startCode);
+            alert('Job started successfully!');
             setStartingJob(false);
             setStartCode('');
             // loadBookingDetails(); // Updated by listener
@@ -395,6 +413,37 @@ function BookingDetailsContent() {
                                 MARK COMPLETED
                             </Button>
                         )}
+                    </div>
+                )}
+
+                {/* Customer Rating Display */}
+                {booking.status === 'completed' && customerRating && (
+                    <div className="bg-yellow-50 border border-yellow-200 rounded-2xl p-5 shadow-sm">
+                        <div className="flex items-center gap-2 mb-3">
+                            <h3 className="text-sm font-bold text-yellow-800 uppercase tracking-wider">Customer Review</h3>
+                            <span className="text-xs text-yellow-600 bg-yellow-100 px-2 py-0.5 rounded-full">Verified</span>
+                        </div>
+
+                        <div className="flex items-center gap-1 mb-3">
+                            {[1, 2, 3, 4, 5].map((star) => (
+                                <span key={star} className={`text-2xl ${star <= customerRating.stars ? 'text-yellow-400' : 'text-gray-300'}`}>
+                                    ★
+                                </span>
+                            ))}
+                            <span className="ml-2 text-lg font-bold text-yellow-900">{customerRating.stars}.0</span>
+                        </div>
+
+                        {customerRating.comment ? (
+                            <div className="bg-white/60 p-3 rounded-xl border border-yellow-100">
+                                <p className="text-sm text-gray-700 italic">"{customerRating.comment}"</p>
+                            </div>
+                        ) : (
+                            <p className="text-sm text-gray-500 italic">No comment provided.</p>
+                        )}
+
+                        <div className="mt-3 text-xs text-gray-400 text-right">
+                            {customerRating.timestamp ? format(toDateSafe(customerRating.timestamp), 'MMM dd, yyyy') : ''}
+                        </div>
                     </div>
                 )}
 

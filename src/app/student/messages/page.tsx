@@ -167,7 +167,7 @@ function MessagesPageContent() {
                                         )}
                                     </div>
                                     <div className="flex justify-between items-center">
-                                        <p className={`text-sm truncate pr-2 ${chat.unreadCount?.[user.uid] > 0 ? 'text-gray-900 font-medium' : 'text-gray-500'}`}>
+                                        <p className={`text-sm truncate pr-2 ${chat.unreadCount?.[user.uid] > 0 ? 'text-gray-900 font-bold' : 'text-gray-500 font-medium'}`}>
                                             {chat.lastMessage || 'No messages yet'}
                                         </p>
                                         {chat.unreadCount && chat.unreadCount[user.uid] > 0 && (

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/Button';
@@ -39,7 +39,33 @@ export default function KYCPage() {
 
     const [submitted, setSubmitted] = useState(false);
 
-    // ... (inside component)
+    const { userData, refreshUserData } = useAuth();
+
+    // Refresh user data on mount to ensure status is up to date
+    // Refresh user data on mount to ensure status is up to date
+    useEffect(() => {
+        refreshUserData();
+        // Check local storage for "fake" pending state
+        if (typeof window !== 'undefined') {
+            const localStatus = localStorage.getItem('kyc_status');
+            if (localStatus === 'pending') {
+                setSubmitted(true);
+            }
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    // Sync remote status with local storage
+    useEffect(() => {
+        const remoteStatus = userData?.tutorProfile?.kyc?.status;
+        const isVerified = userData?.tutorProfile?.verified;
+
+        if ((remoteStatus === 'rejected' || isVerified) && typeof window !== 'undefined') {
+            localStorage.removeItem('kyc_status');
+            setSubmitted(false);
+        }
+    }, [userData]);
+
 
     const handleSubmit = async () => {
         if (!selfie || !idFile || !idNumber || !userData?.uid) return;
@@ -52,7 +78,10 @@ export default function KYCPage() {
                 idNumber,
                 idType
             });
-            setSubmitted(true);
+            // "Fake" persistence using local storage
+            localStorage.setItem('kyc_status', 'pending');
+            setSubmitted(true); // Immediate UI update
+            await refreshUserData();
             window.scrollTo({ top: 0, behavior: 'smooth' });
         } catch (error) {
             console.error('KYC Submission failed:', error);
@@ -63,8 +92,6 @@ export default function KYCPage() {
     };
 
     const isFormValid = selfie && idNumber && idFile;
-
-    const { userData } = useAuth();
 
     const status = userData?.tutorProfile?.kyc?.status;
     const isVerified = userData?.tutorProfile?.verified;
@@ -98,7 +125,7 @@ export default function KYCPage() {
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                             </svg>
                         </div>
-                        <h3 className="text-xl font-bold text-green-800 mb-2">Verification Approved</h3>
+                        <h3 className="text-xl font-bold text-green-800 mb-2">Verification Completed</h3>
                         <p className="text-green-700">Your profile has been successfully verified! You can now accept bookings and access all provider features.</p>
                     </div>
                 </div>
@@ -135,8 +162,10 @@ export default function KYCPage() {
                                 </svg>
                             </div>
                             <div>
-                                <h3 className="font-bold text-red-800">Verification Rejected</h3>
-                                <p className="text-sm text-red-700 mt-1">Verification rejected by the admin. Please upload the correct documents again.</p>
+                                <h3 className="font-bold text-red-800">Verification Failed</h3>
+                                <p className="text-sm text-red-700 mt-1">
+                                    {userData?.tutorProfile?.kyc?.rejectionReason || "Verification failed. Please upload the correct documents again."}
+                                </p>
                             </div>
                         </div>
                     </div>
@@ -161,7 +190,7 @@ export default function KYCPage() {
                                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
                             </div>
                             <div>
-                                <h3 className="font-bold text-yellow-800">Verification Pending</h3>
+                                <h3 className="font-bold text-yellow-800">Verification Required</h3>
                                 <p className="text-sm text-yellow-700 mt-1">Please submit your documents to get your profile verified and start accepting bookings.</p>
                             </div>
                         </div>
@@ -307,4 +336,3 @@ export default function KYCPage() {
         </div>
     );
 }
-

@@ -142,7 +142,7 @@ export default function TutorMessagesPage() {
                                                     </Badge>
                                                 )}
                                             </div>
-                                            <p className="text-sm text-gray-600 truncate mb-2 font-medium">
+                                            <p className={`text-sm truncate mb-2 ${chat.unreadCount?.[user.uid] > 0 ? 'text-gray-900 font-bold' : 'text-gray-600 font-medium'}`}>
                                                 {chat.lastMessage || 'No messages yet'}
                                             </p>
                                             <div className="flex items-center justify-between text-xs text-gray-400 mt-2">

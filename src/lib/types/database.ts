@@ -35,6 +35,7 @@ export interface StudentProfile {
     favorites: string[]; // tutor UIDs
     profilePicture?: string; // Storage URL
     grade?: string;
+    area?: string;
     coordinates?: {
         latitude: number;
         longitude: number;
@@ -110,6 +111,7 @@ export interface Message {
     text: string;
     timestamp: Timestamp;
     read: boolean;
+    status?: 'sent' | 'delivered' | 'seen';
 }
 
 // Rating

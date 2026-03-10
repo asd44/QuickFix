@@ -129,8 +129,11 @@ export default function TutorBookingsPage() {
 
     const handleDeclineBooking = async (bookingId: string) => {
         const reason = prompt('Reason for declining (optional):');
+        const name = userData?.tutorProfile ? `${userData.tutorProfile.firstName} ${userData.tutorProfile.lastName}` : 'tutor';
+        const finalReason = `Cancelled by ${name}${reason ? ': ' + reason : ''}`;
+
         try {
-            await BookingService.cancelBooking(bookingId, reason || 'Declined by tutor');
+            await BookingService.cancelBooking(bookingId, finalReason);
             // loadBookings(); // Auto-updated by listener
         } catch (error) {
             console.error('Failed to decline booking:', error);
@@ -145,8 +148,8 @@ export default function TutorBookingsPage() {
         }
 
         try {
-            const code = await BookingService.startJobWithCode(bookingId, startCode);
-            alert(`Job started! Customer's completion code: ${code}\n\nCustomer will share this code with you after work is done.`);
+            await BookingService.startJobWithCode(bookingId, startCode);
+            alert('Job started successfully!');
             setStartingJob(null);
             setStartCode('');
             // loadBookings(); // Auto-updated by listener
@@ -235,7 +238,7 @@ export default function TutorBookingsPage() {
                 </div>
 
                 {/* Spacer for Fixed Header */}
-                <div className="h-[88px] bg-[#5A0E24]"></div>
+                <div className="h-[120px] bg-[#5A0E24]"></div>
 
                 {/* Scrollable Content (Stats & Filters) */}
                 <div className="px-4 pb-4 bg-[#5A0E24]">

@@ -4,6 +4,8 @@ import { useState, useEffect, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { FirebaseAuthentication } from '@capacitor-firebase/authentication';
 import { Capacitor } from '@capacitor/core';
+import { FirestoreREST } from '@/lib/firebase/nativeFirestore';
+import { User } from '@/lib/types/database';
 
 export default function OTPLogin() {
     const [phoneNumber, setPhoneNumber] = useState('');
@@ -153,14 +155,41 @@ export default function OTPLogin() {
 
             console.log('Firebase OTP verified successfully, user:', result.user?.uid);
 
-            // Native auth is now complete - redirect to signup to complete profile
-            // Use window.location.search directly for better Capacitor compatibility
-            const urlParams = new URLSearchParams(window.location.search);
-            const role = urlParams.get('role') || 'student';
-            console.log('OTP verified, redirecting to signup with role:', role);
+            if (result.user?.uid) {
+                // Retry logic for fetching user profile
+                let userDoc = null;
+                let attempts = 0;
+                const maxAttempts = 3;
 
-            // Use window.location for reliable Capacitor navigation
-            window.location.href = `/auth/signup?role=${role}`;
+                while (attempts < maxAttempts && !userDoc) {
+                    try {
+                        console.log(`Fetching user profile attempt ${attempts + 1}/${maxAttempts}...`);
+                        userDoc = await FirestoreREST.getDoc<User>('users', result.user.uid);
+                        if (userDoc) break;
+                        // Wait 1 second before retry if null
+                        await new Promise(resolve => setTimeout(resolve, 1000));
+                    } catch (err) {
+                        console.error('Error fetching user doc:', err);
+                    }
+                    attempts++;
+                }
+
+                if (userDoc && userDoc.role) {
+                    console.log('User exists with role:', userDoc.role);
+                    // User is registered - redirect based on role
+                    if (userDoc.role === 'tutor') {
+                        // Use router.push for instant client-side navigation
+                        // This avoids reloading the app and hitting the root page redirection logic
+                        router.push('/tutor/dashboard');
+                    } else {
+                        router.push('/');
+                    }
+                } else {
+                    console.log('User profile not found after retries, redirecting to role selection');
+                    // User not registered - go to role selection using router to preserve session state
+                    router.push('/auth/role-selection');
+                }
+            }
         } catch (err: any) {
             console.error('OTP verification error:', err);
             setError(err.message || 'Invalid OTP. Please try again.');
@@ -196,138 +225,145 @@ export default function OTPLogin() {
     };
 
     return (
-        <div className="min-h-screen bg-gradient-to-br from-orange-50 to-white flex items-center justify-center p-4">
-            <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8 space-y-6">
-                <div className="text-center space-y-2">
-                    <h2 className="text-3xl font-bold text-gray-900">Welcome to QuickFix</h2>
-                    <p className="text-gray-600">Sign in or Sign up with your phone</p>
+        <div className="w-full">
+            <div className="text-center space-y-4 mb-8">
+                <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-orange-100 text-orange-600 mb-2">
+                    <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 18h.01M8 21h8a2 2 0 002-2V5a2 2 0 00-2-2H8a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                    </svg>
                 </div>
+                <h2 className="text-2xl font-bold text-gray-900">Welcome to QuickFix</h2>
+                <p className="text-gray-500 text-sm">Sign in to access your services</p>
+            </div>
 
-                {step === 'phone' ? (
-                    <form onSubmit={handleSendOTP} className="space-y-6">
-                        <div className="space-y-2">
-                            <h3 className="text-2xl font-semibold text-center">Phone Login</h3>
-                            {error && (
-                                <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm text-center">
-                                    {error}
-                                </div>
-                            )}
+            {step === 'phone' ? (
+                <form onSubmit={handleSendOTP} className="space-y-6">
+                    {error && (
+                        <div className="bg-red-50 border border-red-100 text-red-600 p-3 rounded-xl text-sm text-center animate-in fade-in slide-in-from-top-2">
+                            {error}
                         </div>
+                    )}
 
-                        <div className="space-y-2">
-                            <label className="block text-sm font-medium text-gray-700">
-                                Phone Number
-                            </label>
-                            <div className="flex items-center space-x-2">
-                                <span className="bg-gray-100 px-4 py-3 rounded-lg text-gray-700 font-medium">
-                                    +91
-                                </span>
-                                <input
-                                    type="tel"
-                                    maxLength={10}
-                                    value={phoneNumber}
-                                    onChange={(e) => setPhoneNumber(e.target.value.replace(/\D/g, ''))}
-                                    className="flex-1 px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                                    placeholder="Enter 10-digit number"
-                                    disabled={loading}
-                                />
+                    <div className="space-y-2">
+                        <label className="block text-sm font-semibold text-gray-700 ml-1">
+                            Mobile Number
+                        </label>
+                        <div className="relative group">
+                            <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
+                                <span className="text-gray-500 font-medium border-r border-gray-200 pr-3">+91</span>
                             </div>
-                        </div>
-
-                        <button
-                            type="submit"
-                            disabled={loading || phoneNumber.length !== 10}
-                            className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition"
-                        >
-                            {loading ? 'Sending...' : 'Send OTP'}
-                        </button>
-
-                        <div className="pt-4 border-t border-gray-200">
-                            <p className="text-center text-gray-600 text-sm">Are you an administrator?</p>
-                            <button
-                                type="button"
-                                onClick={() => router.push('/auth/admin/login')}
-                                className="w-full mt-2 text-orange-600 font-medium hover:text-orange-700"
-                            >
-                                Admin Login
-                            </button>
-                        </div>
-                    </form>
-                ) : (
-                    <div className="space-y-6">
-                        <button
-                            onClick={() => setStep('phone')}
-                            className="flex items-center text-gray-600 hover:text-gray-900"
-                        >
-                            <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                            </svg>
-                            Back
-                        </button>
-
-                        <div className="space-y-4">
-                            <h3 className="text-2xl font-semibold text-center">Enter OTP Code</h3>
-                            <p className="text-center text-gray-600">
-                                Check your SMS! We've sent a one-time verification code to +91 {phoneNumber}. Enter the code below to verify your account.
-                            </p>
-
-                            {error && (
-                                <div className="bg-red-50 text-red-600 p-3 rounded-lg text-sm text-center">
-                                    {error}
-                                </div>
-                            )}
-
-                            <div className="flex justify-center gap-2">
-                                {otp.map((digit, index) => (
-                                    <input
-                                        key={index}
-                                        ref={(el) => (inputRefs.current[index] = el)}
-                                        type="text"
-                                        inputMode="numeric"
-                                        maxLength={1}
-                                        value={digit}
-                                        onChange={(e) => handleOtpChange(index, e.target.value)}
-                                        onKeyDown={(e) => handleKeyDown(index, e)}
-                                        className="w-12 h-12 text-center text-xl font-semibold border-2 border-gray-300 rounded-lg focus:border-orange-500 focus:ring-2 focus:ring-orange-200"
-                                        disabled={loading}
-                                    />
-                                ))}
-                            </div>
-
-                            <div className="text-center text-sm text-gray-600">
-                                {canResend ? (
-                                    <button
-                                        onClick={handleResend}
-                                        className="text-purple-600 font-medium hover:text-purple-700"
-                                    >
-                                        Resend code
-                                    </button>
-                                ) : (
-                                    <p>You can resend the code in {timer} seconds</p>
-                                )}
-                            </div>
-
-                            <button
-                                onClick={handleVerifyOTP}
-                                disabled={loading || otp.join('').length !== 6}
-                                className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition"
-                            >
-                                {loading ? 'Verifying...' : 'Verify OTP'}
-                            </button>
-                        </div>
-
-                        <div className="pt-4 border-t border-gray-200">
-                            <p className="text-center text-gray-600 text-sm">Are you an administrator?</p>
-                            <button
-                                onClick={() => router.push('/auth/admin/login')}
-                                className="w-full mt-2 text-orange-600 font-medium hover:text-orange-700"
-                            >
-                                Admin Login
-                            </button>
+                            <input
+                                type="tel"
+                                maxLength={10}
+                                value={phoneNumber}
+                                onChange={(e) => setPhoneNumber(e.target.value.replace(/\D/g, ''))}
+                                className="w-full pl-20 pr-4 py-3.5 bg-gray-50 border border-gray-200 rounded-xl focus:ring-2 focus:ring-orange-500/20 focus:border-orange-500 transition-all font-medium text-gray-900 placeholder:text-gray-400"
+                                placeholder="Enter mobile number"
+                                disabled={loading}
+                            />
                         </div>
                     </div>
-                )}
-            </div>
+
+                    <button
+                        type="submit"
+                        disabled={loading || phoneNumber.length !== 10}
+                        className="w-full bg-gradient-to-r from-orange-600 to-orange-500 hover:from-orange-700 hover:to-orange-600 text-white py-3.5 rounded-xl font-bold shadow-lg shadow-orange-500/30 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none transition-all duration-200"
+                    >
+                        {loading ? (
+                            <span className="flex items-center justify-center gap-2">
+                                <svg className="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                                </svg>
+                                Sending OTP...
+                            </span>
+                        ) : 'Get Verification Code'}
+                    </button>
+
+                    <div className="pt-6 text-center">
+                        <button
+                            type="button"
+                            onClick={() => router.push('/auth/admin/login')}
+                            className="text-xs font-semibold text-gray-400 hover:text-gray-600 transition-colors"
+                        >
+                            Log in as Administrator
+                        </button>
+                    </div>
+                </form>
+            ) : (
+                <div className="space-y-6">
+                    <button
+                        onClick={() => setStep('phone')}
+                        className="flex items-center text-sm font-medium text-gray-500 hover:text-gray-900 transition-colors mb-4"
+                    >
+                        <svg className="w-4 h-4 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                        </svg>
+                        Change Number
+                    </button>
+
+                    <div className="text-center">
+                        <h3 className="text-xl font-bold text-gray-900 mb-2">Verify Phone</h3>
+                        <p className="text-sm text-gray-500">
+                            Code sent to <span className="font-semibold text-gray-900">+91 {phoneNumber}</span>
+                        </p>
+                    </div>
+
+                    {error && (
+                        <div className="bg-red-50 border border-red-100 text-red-600 p-3 rounded-xl text-sm text-center animate-in fade-in">
+                            {error}
+                        </div>
+                    )}
+
+                    <div className="flex justify-center gap-2 sm:gap-3">
+                        {otp.map((digit, index) => (
+                            <input
+                                key={index}
+                                ref={(el) => { inputRefs.current[index] = el; }}
+                                type="text"
+                                inputMode="numeric"
+                                maxLength={1}
+                                value={digit}
+                                onChange={(e) => handleOtpChange(index, e.target.value)}
+                                onKeyDown={(e) => handleKeyDown(index, e)}
+                                className="w-10 h-12 sm:w-12 sm:h-14 text-center text-xl font-bold bg-gray-50 border border-gray-200 rounded-xl focus:bg-white focus:border-orange-500 focus:ring-4 focus:ring-orange-500/10 transition-all caret-orange-500"
+                                disabled={loading}
+                            />
+                        ))}
+                    </div>
+
+                    <div className="text-center">
+                        {canResend ? (
+                            <button
+                                onClick={handleResend}
+                                className="text-sm font-semibold text-orange-600 hover:text-orange-700 transition-colors"
+                            >
+                                Resend verification code
+                            </button>
+                        ) : (
+                            <p className="text-sm text-gray-400 font-medium">
+                                Resend code in <span className="text-gray-600">{timer}s</span>
+                            </p>
+                        )}
+                    </div>
+
+                    <button
+                        onClick={handleVerifyOTP}
+                        disabled={loading || otp.join('').length !== 6}
+                        className="w-full bg-gradient-to-r from-orange-600 to-orange-500 hover:from-orange-700 hover:to-orange-600 text-white py-3.5 rounded-xl font-bold shadow-lg shadow-orange-500/30 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:shadow-none transition-all duration-200"
+                    >
+                        {loading ? (
+                            <span className="flex items-center justify-center gap-2">
+                                <svg className="animate-spin h-5 w-5 text-white" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                                </svg>
+                                Verifying...
+                            </span>
+                        ) : 'Verify & Continue'}
+                    </button>
+                </div>
+            )}
         </div>
     );
 }

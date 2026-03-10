@@ -23,6 +23,40 @@ function ProviderAnalyticsContent() {
     const [loading, setLoading] = useState(true);
     const [statusUpdating, setStatusUpdating] = useState(false);
     const [isSuspended, setIsSuspended] = useState(false);
+    const [showRevokeConfirm, setShowRevokeConfirm] = useState(false);
+    const [rejectionReason, setRejectionReason] = useState('');
+    const [revoking, setRevoking] = useState(false);
+
+    const handleRevokeVerification = async () => {
+        if (!provider?.uid) return;
+        if (!rejectionReason.trim()) {
+            alert('Please provide a reason for revocation.');
+            return;
+        }
+
+        setRevoking(true);
+        try {
+            // Use proper nested object structure for update
+            const updateData: any = {
+                tutorProfile: {
+                    verified: false,
+                    kyc: {
+                        status: 'rejected',
+                        rejectionReason: rejectionReason.trim()
+                    }
+                }
+            };
+            await FirestoreREST.updateDoc('users', provider.uid, updateData);
+            alert('Verification revoked successfully.');
+            window.location.reload();
+        } catch (error) {
+            console.error('Failed to revoke verification:', error);
+            alert('Failed to revoke verification.');
+        } finally {
+            setRevoking(false);
+            setShowRevokeConfirm(false);
+        }
+    };
 
     useEffect(() => {
         if (!id) return;
@@ -137,8 +171,8 @@ function ProviderAnalyticsContent() {
                                 <Badge className="bg-yellow-100 text-yellow-800 hover:bg-yellow-200">Pending Verification</Badge>
                             )}
 
-                            <div className="mt-4 pt-4 border-t border-gray-100">
-                                <div className="flex items-center justify-between mb-3">
+                            <div className="mt-4 pt-4 border-t border-gray-100 space-y-3">
+                                <div className="flex items-center justify-between">
                                     <span className="text-xs font-medium text-gray-500">Account Status</span>
                                     <span className="relative flex h-2 w-2">
                                         <span className={`relative inline-flex rounded-full h-2 w-2 ${isSuspended ? 'bg-red-500' : 'bg-green-500'}`}></span>
@@ -163,6 +197,19 @@ function ProviderAnalyticsContent() {
                                         </>
                                     )}
                                 </Button>
+
+                                {provider.tutorProfile?.verified && (
+                                    <Button
+                                        variant="destructive"
+                                        size="sm"
+                                        onClick={() => setShowRevokeConfirm(true)}
+                                        isLoading={revoking}
+                                        className="w-full flex items-center justify-center gap-2 mt-2"
+                                    >
+                                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                                        Revoke Verification
+                                    </Button>
+                                )}
                             </div>
                         </CardContent>
                     </Card>
@@ -277,6 +324,46 @@ function ProviderAnalyticsContent() {
                     </div>
                 </div>
             </main>
+
+            {/* Revoke Confirmation Modal */}
+            {showRevokeConfirm && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                    <div className="bg-white rounded-lg p-6 max-w-sm w-full shadow-xl space-y-4">
+                        <h3 className="text-lg font-bold text-gray-900 text-red-600">Revoke Verification?</h3>
+                        <p className="text-gray-600">
+                            This will remove the Verified badge and mark their KYC as rejected. They will need to resubmit documents.
+                        </p>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Reason for Revocation <span className="text-red-500">*</span></label>
+                            <textarea
+                                value={rejectionReason}
+                                onChange={(e) => setRejectionReason(e.target.value)}
+                                placeholder="e.g. Invalid documents found later, Policy violation..."
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent text-sm"
+                                rows={3}
+                            />
+                        </div>
+                        <div className="flex gap-3 pt-2">
+                            <Button
+                                onClick={() => setShowRevokeConfirm(false)}
+                                variant="outline"
+                                className="flex-1"
+                                disabled={revoking}
+                            >
+                                Cancel
+                            </Button>
+                            <Button
+                                onClick={handleRevokeVerification}
+                                disabled={revoking}
+                                variant="destructive"
+                                className="flex-1"
+                            >
+                                {revoking ? 'Revoking...' : 'Confirm Revoke'}
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

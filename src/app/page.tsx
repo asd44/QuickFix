@@ -21,7 +21,7 @@ function toDateSafe(timestamp: any): Date {
 }
 
 export default function HomePage() {
-  const { user, userData, loading: authLoading } = useAuth();
+  const { user, userData, loading: authLoading, signOut } = useAuth();
   const router = useRouter();
   const [allTutors, setAllTutors] = useState<User[]>([]);
   const [topRatedTutors, setTopRatedTutors] = useState<User[]>([]);
@@ -112,11 +112,28 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
-    // Redirect to login if not authenticated
-    if (!authLoading && !user) {
-      router.push('/welcome');
+    // Handling App Flow & Entry Points
+    if (!authLoading) {
+      if (!user) {
+        // Not logged in -> Go to Login Page
+        router.push('/auth/login');
+      } else if (userData) {
+        // Logged in AND has profile
+        if (userData.role === 'tutor') {
+          // Provider -> Provider Dashboard
+          router.push('/tutor/dashboard');
+        }
+        // If Student -> Stay here (Customer Dashboard)
+      } else {
+        // Logged in via Firebase but NO Profile (Interrupted Registration)
+        // User Requirement: "If the user closes the app ... next time ... login page"
+        console.log('Interrupted registration detected - signing out and resetting flow');
+        signOut().then(() => {
+          router.push('/auth/login');
+        });
+      }
     }
-  }, [user, authLoading, router]);
+  }, [user, userData, authLoading, router, signOut]);
 
   useEffect(() => {
     if (user) {
@@ -179,7 +196,23 @@ export default function HomePage() {
   }, [user, selectedCategory, userData?.role]);
 
   if (authLoading || !user) {
-    return null;
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500"></div>
+      </div>
+    );
+  }
+
+  // Prevent showing Customer UI to Tutors (while redirecting) or Incomplete Users (while signing out)
+  if (userData?.role === 'tutor' || !userData) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="flex flex-col items-center gap-4">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500"></div>
+          <p className="text-gray-500">{userData?.role === 'tutor' ? 'Redirecting to Dashboard...' : 'Verifying Profile...'}</p>
+        </div>
+      </div>
+    );
   }
 
   // Client-side filtering for search query
@@ -192,19 +225,14 @@ export default function HomePage() {
   });
 
   const ProviderCard = ({ tutor }: { tutor: User }) => {
-    const isTutor = userData?.role === 'tutor';
-    const CardWrapper = isTutor ? 'div' : Link;
-    const wrapperProps = isTutor ? { className: 'block h-full' } : { href: `/tutor/view?id=${tutor.uid}`, className: 'block h-full' };
-
     return (
-      // @ts-ignore
-      <CardWrapper {...wrapperProps}>
-        <Card className={`hover:shadow-lg transition-all ${isTutor ? 'cursor-default' : 'cursor-pointer'} h-full !border-none shadow-sm !bg-gradient-to-br ${isTutor ? '!from-[#771532] !to-[#450a1b]' : '!from-[#005461] !to-[#002025]'}`}>
+      <Link href={`/tutor/view?id=${tutor.uid}`} className="block h-full">
+        <Card className="hover:shadow-lg transition-all cursor-pointer h-full !border-none shadow-sm !bg-gradient-to-br !from-[#005461] !to-[#002025]">
           <CardContent className="pl-3 flex items-center gap-3 text-left">
             <div className="mt-6 w-16 h-16 rounded-full bg-white/10 flex items-center justify-center flex-shrink-0 overflow-hidden border border-white/20">
-              {tutor.tutorProfile?.profilePicture ? (
+              {tutor.tutorProfile?.profilePicture || tutor.tutorProfile?.kyc?.photoUrl ? (
                 <img
-                  src={tutor.tutorProfile.profilePicture}
+                  src={tutor.tutorProfile?.profilePicture || tutor.tutorProfile?.kyc?.photoUrl}
                   alt="Profile"
                   className="w-full h-full object-cover"
                 />
@@ -234,148 +262,72 @@ export default function HomePage() {
             </div>
           </CardContent>
         </Card>
-      </CardWrapper>
+      </Link>
     );
   };
 
   return (
     <div className="min-h-screen bg-muted/30 pb-0">
-      {/* Dashboard Header */}
-      <div className={`${userData?.role === 'tutor' ? 'bg-[#5A0E24]' : 'bg-[#005461]'} relative z-20 transition-colors duration-300`}>
+      {/* Dashboard Header - Customer Theme */}
+      <div className="bg-[#005461] relative z-20 transition-colors duration-300">
         <div className="container mx-auto px-4 pt-[calc(1rem+env(safe-area-inset-top))] pb-6">
           <div className="space-y-4">
             <div>
               <h1 className="text-xl font-bold text-white">
-                Welcome, {userData?.studentProfile?.firstName || userData?.tutorProfile?.firstName || 'User'}
+                Welcome, {userData?.studentProfile?.firstName || 'User'}
               </h1>
 
-              {userData?.role !== 'tutor' && (
-                <Link href="/student/location">
-                  <div className="flex items-start gap-2 cursor-pointer group py-1 mt-1">
-                    <svg className="w-5 h-5 text-red-400 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
-                    </svg>
-                    <div className="flex-1 min-w-0">
-                      <h3 className="font-semibold text-white flex items-center gap-1 text-sm group-hover:text-gray-200 transition-colors">
-                        {userData?.studentProfile?.city || userData?.tutorProfile?.city || 'Select Location'}
-                        <svg className="w-4 h-4 text-gray-300 group-hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-                        </svg>
-                      </h3>
-                      <p className="text-xs text-gray-300 truncate">
-                        {userData?.studentProfile?.address || userData?.tutorProfile?.address || userData?.tutorProfile?.area || 'No address set'}
-                      </p>
-                    </div>
+              <Link href="/student/location">
+                <div className="flex items-start gap-2 cursor-pointer group py-1 mt-1">
+                  <svg className="w-5 h-5 text-red-400 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-semibold text-white flex items-center gap-1 text-sm group-hover:text-gray-200 transition-colors">
+                      {userData?.studentProfile?.city || 'Select Location'}
+                      <svg className="w-4 h-4 text-gray-300 group-hover:text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                      </svg>
+                    </h3>
+                    <p className="text-xs text-gray-300 truncate">
+                      {userData?.studentProfile?.address || 'No address set'}
+                    </p>
                   </div>
-                </Link>
-              )}
+                </div>
+              </Link>
             </div>
-
-            {/* Tutor Stats Tiles */}
-            {userData?.role === 'tutor' && (
-              <div className="grid grid-cols-2 gap-4 mt-4">
-                {/* New Requests Tile */}
-                <Link href="/tutor/bookings?filter=pending">
-                  <div className="relative overflow-hidden rounded-2xl p-4 group cursor-pointer h-full border border-white/40 shadow-lg bg-gradient-to-br from-white via-white to-gray-50 hover:shadow-xl transition-all duration-300">
-                    {/* Shiny overlay effect */}
-                    <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/40 to-white/60 opacity-0 group-hover:opacity-100 transition-opacity duration-700"></div>
-
-                    <div className="relative z-10 flex flex-col items-center justify-center text-center h-full gap-2">
-                      <div className="p-2 bg-primary/10 rounded-full mb-1 group-hover:scale-110 transition-transform duration-300 shadow-sm">
-                        <svg className="w-6 h-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-                        </svg>
-                      </div>
-                      <span className="text-gray-600 text-sm font-medium leading-tight">New Requests</span>
-                      <span className="text-2xl font-bold text-gray-900 group-hover:text-primary transition-colors">{tutorStats.newRequests}</span>
-                    </div>
-                  </div>
-                </Link>
-
-                {/* Total Earnings Tile */}
-                <div className="relative overflow-hidden rounded-2xl p-4 group cursor-pointer border border-white/40 shadow-lg bg-gradient-to-br from-white via-white to-gray-50 hover:shadow-xl transition-all duration-300">
-                  <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/40 to-white/60 opacity-0 group-hover:opacity-100 transition-opacity duration-700"></div>
-
-                  <div className="relative z-10 flex flex-col items-center justify-center text-center h-full gap-2">
-                    <div className="p-2 bg-primary/10 rounded-full mb-1 group-hover:scale-110 transition-transform duration-300 shadow-sm">
-                      <svg className="w-6 h-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                    </div>
-                    <span className="text-gray-600 text-sm font-medium leading-tight">Total Earnings</span>
-                    <span className="text-2xl font-bold text-gray-900 group-hover:text-primary transition-colors">₹{tutorStats.totalEarnings}</span>
-                  </div>
-                </div>
-
-                {/* Pending Jobs Tile */}
-                <Link href="/tutor/bookings?filter=in_progress">
-                  <div className="relative overflow-hidden rounded-2xl p-4 group cursor-pointer h-full border border-white/40 shadow-lg bg-gradient-to-br from-white via-white to-gray-50 hover:shadow-xl transition-all duration-300">
-                    <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/40 to-white/60 opacity-0 group-hover:opacity-100 transition-opacity duration-700"></div>
-
-                    <div className="relative z-10 flex flex-col items-center justify-center text-center h-full gap-2">
-                      <div className="p-2 bg-primary/10 rounded-full mb-1 group-hover:scale-110 transition-transform duration-300 shadow-sm">
-                        <svg className="w-6 h-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                        </svg>
-                      </div>
-                      <span className="text-gray-600 text-sm font-medium leading-tight">Pending Jobs</span>
-                      <span className="text-2xl font-bold text-gray-900 group-hover:text-primary transition-colors">{tutorStats.pendingJobs}</span>
-                    </div>
-                  </div>
-                </Link>
-
-                {/* Completed Jobs Tile */}
-                <div className="relative overflow-hidden rounded-2xl p-4 group cursor-pointer border border-white/40 shadow-lg bg-gradient-to-br from-white via-white to-gray-50 hover:shadow-xl transition-all duration-300">
-                  <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/40 to-white/60 opacity-0 group-hover:opacity-100 transition-opacity duration-700"></div>
-
-                  <div className="relative z-10 flex flex-col items-center justify-center text-center h-full gap-2">
-                    <div className="p-2 bg-primary/10 rounded-full mb-1 group-hover:scale-110 transition-transform duration-300 shadow-sm">
-                      <svg className="w-6 h-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                      </svg>
-                    </div>
-                    <span className="text-gray-600 text-sm font-medium leading-tight">Completed Jobs</span>
-                    <span className="text-2xl font-bold text-gray-900 group-hover:text-primary transition-colors">{tutorStats.completedJobs}</span>
-                  </div>
-                </div>
-              </div>
-            )}
-
           </div>
         </div>
       </div>
 
       {/* Sticky Search & Categories (Sticks to top) */}
-      {/* Sticky Search & Categories (Sticks to top) - Hidden for Tutors */}
-      {userData?.role !== 'tutor' && (
-        <div className={`sticky top-0 z-30 transition-all duration-300 ${isScrolled ? 'bg-white/95 backdrop-blur-md shadow-sm border-b border-gray-100 pb-2' : 'bg-[#005461] -mt-[1px] pb-2'}`}>
-          <div className="container mx-auto px-4 pt-2">
-            {/* Search Bar */}
-            <div className="relative">
-              <input
-                type="text"
-                placeholder={placeholderText}
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className={`w-full pl-10 pr-4 py-3 rounded-xl border-none focus:outline-none focus:ring-2 focus:ring-primary/50 transition-colors ${isScrolled ? 'bg-gray-100 text-gray-900 placeholder:text-gray-500' : 'bg-white text-gray-900'}`}
-              />
-              <svg
-                className={`absolute left-3 top-3.5 h-5 w-5 transition-colors ${isScrolled ? 'text-gray-500' : 'text-gray-400'}`}
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
-              >
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-            </div>
+      <div className={`sticky top-0 z-30 transition-all duration-300 ${isScrolled ? 'bg-white/95 backdrop-blur-md shadow-sm border-b border-gray-100 pb-2' : 'bg-[#005461] -mt-[1px] pb-2'}`}>
+        <div className="container mx-auto px-4 pt-2">
+          {/* Search Bar */}
+          <div className="relative">
+            <input
+              type="text"
+              placeholder={placeholderText}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className={`w-full pl-10 pr-4 py-3 rounded-xl border-none focus:outline-none focus:ring-2 focus:ring-primary/50 transition-colors ${isScrolled ? 'bg-gray-100 text-gray-900 placeholder:text-gray-500' : 'bg-white text-gray-900'}`}
+            />
+            <svg
+              className={`absolute left-3 top-3.5 h-5 w-5 transition-colors ${isScrolled ? 'text-gray-500' : 'text-gray-400'}`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
           </div>
         </div>
-      )}
+      </div>
 
       {/* Service Categories Grid - Colored Background Wrapper */}
       {
-        userData?.role !== 'tutor' && !searchQuery && selectedCategory === 'All' && (
+        !searchQuery && selectedCategory === 'All' && (
           <div ref={servicesRef} className={`transition-colors duration-500 -mt-[1px] pb-10 rounded-b-[2.5rem] shadow-sm mb-6 relative z-10 ${isScrolled ? 'bg-white' : 'bg-[#005461]'}`}>
             <div className="container mx-auto px-4 pt-4">
               <h2 className={`font-bold text-lg mb-4 transition-colors duration-500 ${isScrolled ? 'text-gray-900' : 'text-white'}`}>Explore all services</h2>
@@ -474,54 +426,7 @@ export default function HomePage() {
           </div>
         ) : (
           <>
-            {/* New Requests Section - Only for Tutors */}
-            {userData?.role === 'tutor' && pendingBookings.length > 0 && (
-              <section className="w-full bg-white py-8 border-b border-gray-100 mb-2 shadow-[0_0_20px_rgba(0,0,0,0.1)]">
-                <div className="container mx-auto px-4">
-                  <div className="flex justify-between items-center mb-4">
-                    <h2 className="text-2xl font-bold text-gray-900 leading-tight flex items-center gap-2">
-                      New Requests <span className="text-[#5A0E24] text-sm bg-[#5A0E24]/10 px-2 py-1 rounded-full">{pendingBookings.length}</span>
-                    </h2>
-                    <Link href="/tutor/bookings?filter=pending">
-                      <Button variant="ghost" size="sm" className="text-[#5A0E24]">View All</Button>
-                    </Link>
-                  </div>
 
-                  <div className="grid grid-rows-1 grid-flow-col gap-4 overflow-x-auto no-scrollbar pb-4 auto-cols-[85%] md:auto-cols-[350px]">
-                    {pendingBookings.map((booking) => (
-                      <Link key={booking.id} href={`/tutor/booking-details?id=${booking.id}`} className="block h-full">
-                        <Card className="hover:shadow-lg transition-all cursor-pointer h-full !border-none shadow-sm !bg-gradient-to-br !from-[#771532] !to-[#450a1b]">
-                          <CardContent className="px-3 py-4 !pb-4 flex items-center gap-3 text-left">
-                            <div className="w-16 h-16 mt-6 mb-2 rounded-full bg-white/10 flex items-center justify-center flex-shrink-0 text-white font-bold border border-white/20">
-                              {booking.studentName?.[0] || 'C'}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <h3 className="font-bold text-white truncate text-lg leading-tight mt-4">{booking.studentName || 'Customer'}</h3>
-                              <p className="text-gray-200 text-sm truncate">{booking.subject || 'Service Request'}</p>
-                              <div className="flex items-center gap-2 mt-1">
-                                <span className="text-xs text-white/80 bg-white/10 px-2 py-0.5 rounded-full">
-                                  {booking.date ? format(toDateSafe(booking.date), 'MMM dd') : 'TBD'}
-                                </span>
-                                <span className="text-xs text-yellow-400 font-medium">
-                                  New
-                                </span>
-                              </div>
-                            </div>
-                            <div className="flex flex-col items-end mt-4">
-                              <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
-                                <svg className="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                                </svg>
-                              </div>
-                            </div>
-                          </CardContent>
-                        </Card>
-                      </Link>
-                    ))}
-                  </div>
-                </div>
-              </section>
-            )}
 
             {/* Top Rated Providers Section - Only show on 'All' view and if there are results */}
             {selectedCategory === 'All' && topRatedTutors.length > 0 && !searchQuery && (

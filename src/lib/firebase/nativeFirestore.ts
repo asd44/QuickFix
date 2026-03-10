@@ -128,7 +128,10 @@ export interface QueryOptions {
     orderBy?: { field: string; direction?: 'ASCENDING' | 'DESCENDING' }[];
     limit?: number;
     startAfter?: any;
+    offset?: number;
 }
+
+
 
 // Firestore REST API operations
 export const FirestoreREST = {
@@ -144,6 +147,7 @@ export const FirestoreREST = {
             const response = await fetch(`${FIRESTORE_BASE_URL}/${collection}/${docId}`, {
                 method: 'GET',
                 headers: { 'Authorization': `Bearer ${token}` },
+                cache: 'no-store'
             });
 
             if (response.status === 404) return null;
@@ -278,8 +282,18 @@ export const FirestoreREST = {
         if (!token) return [];
 
         try {
+            // Handle subcollections: Split path into parent and collectionId
+            let parent = '';
+            let collectionId = collection;
+
+            if (collection.includes('/')) {
+                const parts = collection.split('/');
+                collectionId = parts.pop() || '';
+                parent = parts.join('/');
+            }
+
             const structuredQuery: any = {
-                from: [{ collectionId: collection }],
+                from: [{ collectionId: collectionId }],
             };
 
             // Build where clause
@@ -322,7 +336,17 @@ export const FirestoreREST = {
                 structuredQuery.limit = options.limit;
             }
 
-            const response = await fetch(`${FIRESTORE_BASE_URL}:runQuery`, {
+            // Add offset
+            if (options.offset) {
+                structuredQuery.offset = options.offset;
+            }
+
+            // Construct URL: Append parent path if it exists
+            const baseUrl = parent
+                ? `${FIRESTORE_BASE_URL}/${parent}`
+                : `${FIRESTORE_BASE_URL}`;
+
+            const response = await fetch(`${baseUrl}:runQuery`, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${token}`,
@@ -369,6 +393,35 @@ export const FirestoreREST = {
         } catch (error) {
             console.error('[FirestoreREST] DELETE error:', error);
             return false;
+        }
+    },
+
+    // List documents in a collection (GET request) - simpler than runQuery for subcollections
+    async listDocuments<T>(collection: string): Promise<T[]> {
+        const token = await getIdToken();
+        if (!token) return [];
+
+        try {
+            const response = await fetch(`${FIRESTORE_BASE_URL}/${collection}`, {
+                method: 'GET',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            if (!response.ok) {
+                console.error('[FirestoreREST] LIST failed:', response.status);
+                return [];
+            }
+
+            const data = await response.json();
+            if (!data.documents) return [];
+
+            return data.documents.map((doc: any) => ({
+                id: doc.name.split('/').pop(),
+                ...convertFromFirestore(doc.fields)
+            })) as T[];
+        } catch (error) {
+            console.error('[FirestoreREST] LIST error:', error);
+            return [];
         }
     },
 

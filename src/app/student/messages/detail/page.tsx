@@ -225,6 +225,11 @@ function StudentChatContent() {
                                 <p className={`text-[10px] mt-1 text-right ${msg.senderId === user?.uid ? 'text-white/70' : 'text-gray-400'
                                     }`}>
                                     {msg.timestamp?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                    {msg.senderId === user?.uid && (
+                                        <span className="ml-1 text-[9px] opacity-80">
+                                            {msg.status === 'seen' ? ' • Seen' : ' • Sent'}
+                                        </span>
+                                    )}
                                 </p>
                             </div>
                         </div>

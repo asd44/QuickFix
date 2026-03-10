@@ -1,0 +1,78 @@
+Property settings:
+    file.encoding = UTF-8
+    file.separator = \
+    java.class.path = 
+    java.class.version = 65.0
+    java.home = C:\Program Files\Java\jdk-21
+    java.io.tmpdir = C:\Users\Ashish\AppData\Local\Temp\
+    java.library.path = C:\Program Files\Java\jdk-21\bin
+        C:\WINDOWS\Sun\Java\bin
+        C:\WINDOWS\system32
+        C:\WINDOWS
+        C:\Python313\Scripts\
+        C:\Python313\
+        C:\Program Files\Common Files\Oracle\Java\javapath
+        C:\Program Files (x86)\Common Files\Oracle\Java\javapath
+        C:\WINDOWS\system32
+        C:\WINDOWS
+        C:\WINDOWS\System32\Wbem
+        C:\WINDOWS\System32\WindowsPowerShell\v1.0\
+        C:\WINDOWS\System32\OpenSSH\
+        C:\Program Files\nodejs\
+        C:\ProgramData\chocolatey\bin
+        C:\Program Files\Git\cmd
+        C:\Program Files\PuTTY\
+        C:\Users\Ashish\AppData\Local\Microsoft\WindowsApps
+        C:\Users\Ashish\AppData\Local\Programs\Microsoft VS Code\bin
+        C:\Users\Ashish\AppData\Roaming\npm
+        C:\Users\Ashish\AppData\Local\Programs\mongosh\
+        C:\Users\Ashish\AppData\Local\Programs\Antigravity\bin
+        c:\Users\Ashish\.antigravity\extensions\vscjava.vscode-java-debug-0.58.3-universal\bundled\scripts\noConfigScripts
+        .
+    java.runtime.name = Java(TM) SE Runtime Environment
+    java.runtime.version = 21.0.8+12-LTS-250
+    java.specification.name = Java Platform API Specification
+    java.specification.vendor = Oracle Corporation
+    java.specification.version = 21
+    java.vendor = Oracle Corporation
+    java.vendor.url = https://java.oracle.com/
+    java.vendor.url.bug = https://bugreport.java.com/bugreport/
+    java.version = 21.0.8
+    java.version.date = 2025-07-15
+    java.vm.compressedOopsMode = 32-bit
+    java.vm.info = mixed mode, sharing
+    java.vm.name = Java HotSpot(TM) 64-Bit Server VM
+    java.vm.specification.name = Java Virtual Machine Specification
+    java.vm.specification.vendor = Oracle Corporation
+    java.vm.specification.version = 21
+    java.vm.vendor = Oracle Corporation
+    java.vm.version = 21.0.8+12-LTS-250
+    jdk.debug = release
+    line.separator = \r \n 
+    native.encoding = Cp1252
+    os.arch = amd64
+    os.name = Windows 11
+    os.version = 10.0
+    path.separator = ;
+    stderr.encoding = Cp1252
+    stdout.encoding = Cp1252
+    sun.arch.data.model = 64
+    sun.boot.library.path = C:\Program Files\Java\jdk-21\bin
+    sun.cpu.endian = little
+    sun.cpu.isalist = amd64
+    sun.io.unicode.encoding = UnicodeLittle
+    sun.java.launcher = SUN_STANDARD
+    sun.jnu.encoding = Cp1252
+    sun.management.compiler = HotSpot 64-Bit Tiered Compilers
+    sun.os.patch.level = 
+    user.country = IN
+    user.dir = D:\Study Material\CSS Tutorial\Antigravity\QuickFix
+    user.home = C:\Users\Ashish
+    user.language = en
+    user.name = Ashish
+    user.script = 
+    user.variant = 
+
+java version "21.0.8" 2025-07-15 LTS
+Java(TM) SE Runtime Environment (build 21.0.8+12-LTS-250)
+Java HotSpot(TM) 64-Bit Server VM (build 21.0.8+12-LTS-250, mixed mode, sharing)

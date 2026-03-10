@@ -68,14 +68,14 @@ export default function AdminDashboard() {
 
                 // Filter tutors who need verification (not verified yet)
                 const pendingKycUsers = allTutors.filter(user => {
-                    const isNotVerified = !user.tutorProfile?.verified;
-                    const hasDocuments = user.tutorProfile?.verificationDocuments &&
-                        user.tutorProfile.verificationDocuments.length > 0;
-                    const kycPending = user.tutorProfile?.kyc?.status === 'pending';
+                    const isVerified = user.tutorProfile?.verified;
+                    const kycStatus = user.tutorProfile?.kyc?.status;
 
-                    // Show in verification queue if: not verified
-                    // (prioritize those with documents or pending KYC)
-                    return isNotVerified;
+                    // Show in verification queue ONLY if:
+                    // 1. Not verified
+                    // 2. AND status IS 'pending' (meaning they explicitly submitted)
+                    // Users with undefined kycStatus haven't submitted anything yet.
+                    return !isVerified && kycStatus === 'pending';
                 });
 
                 console.log('[AdminDashboard] All tutors:', allTutors.length);
@@ -160,18 +160,20 @@ export default function AdminDashboard() {
                     </div>
 
                     {/* All Customers Block */}
-                    <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all duration-300 hover:-translate-y-1">
-                        <div className="mb-4 text-gray-900">
-                            <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
-                            </svg>
+                    <Link href="/admin/students" className="block">
+                        <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all duration-300 hover:-translate-y-1 h-full">
+                            <div className="mb-4 text-gray-900">
+                                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+                                </svg>
+                            </div>
+                            <h3 className="text-sm font-semibold text-gray-900">All Customers</h3>
+                            <div className="flex items-end gap-2 mt-2">
+                                <p className="text-3xl font-bold text-gray-900">{stats.totalCustomers}</p>
+                                <p className="text-sm text-gray-500 mb-1">Active</p>
+                            </div>
                         </div>
-                        <h3 className="text-sm font-semibold text-gray-900">All Customers</h3>
-                        <div className="flex items-end gap-2 mt-2">
-                            <p className="text-3xl font-bold text-gray-900">{stats.totalCustomers}</p>
-                            <p className="text-sm text-gray-500 mb-1">Active</p>
-                        </div>
-                    </div>
+                    </Link>
 
                     {/* All Providers Block */}
                     <Link href="/admin/providers" className="block">
@@ -190,17 +192,34 @@ export default function AdminDashboard() {
                     </Link>
 
                     {/* Total Earnings Block */}
-                    <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all duration-300 hover:-translate-y-1 col-span-2 md:col-span-1">
-                        <div className="mb-4 text-gray-900">
-                            <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
+                    <Link href="/admin/earnings" className="block">
+                        <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all duration-300 hover:-translate-y-1 h-full">
+                            <div className="mb-4 text-gray-900">
+                                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                            </div>
+                            <h3 className="text-sm font-semibold text-gray-900">Total Earnings</h3>
+                            <div className="flex items-end gap-2 mt-2">
+                                <p className="text-3xl font-bold text-gray-900">₹{stats.totalEarnings.toLocaleString()}</p>
+                            </div>
                         </div>
-                        <h3 className="text-sm font-semibold text-gray-900">Total Earnings</h3>
-                        <div className="flex items-end gap-2 mt-2">
-                            <p className="text-3xl font-bold text-gray-900">₹{stats.totalEarnings.toLocaleString()}</p>
+                    </Link>
+
+                    {/* Manage Subscriptions Block */}
+                    <Link href="/admin/subscriptions" className="block">
+                        <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all duration-300 hover:-translate-y-1 h-full">
+                            <div className="mb-4 text-gray-900">
+                                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                                </svg>
+                            </div>
+                            <h3 className="text-sm font-semibold text-gray-900">Subscriptions</h3>
+                            <div className="flex items-end gap-2 mt-2">
+                                <p className="text-sm text-gray-500 mb-1 font-medium">Manage Plans</p>
+                            </div>
                         </div>
-                    </div>
+                    </Link>
                 </div>
 
                 {/* Verification Queue header removed as requested in previous step, so just sections below */}

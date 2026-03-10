@@ -24,11 +24,27 @@ export class BookingService {
         const normalizedDateSeconds = Math.floor(dateObj.getTime() / 1000);
 
         // Deterministic ID for duplicate prevention
-        const bookingId = `bw_${bookingData.tutorId}_${normalizedDateSeconds}_${bookingData.startTime}`;
+        // Modified to include timestamp to allow re-booking of cancelled slots (which have same time)
+        const bookingId = `bw_${bookingData.tutorId}_${normalizedDateSeconds}_${bookingData.startTime}_${Date.now()}`;
 
-        // Check availability
-        const existingDoc = await FirestoreREST.getDoc<Booking>('bookings', bookingId);
-        if (existingDoc && !['cancelled', 'rejected'].includes(existingDoc.status)) {
+        // Check availability (Query for conflicts since ID is now unique)
+        const dateSeconds = normalizedDateSeconds;
+        const startTime = bookingData.startTime;
+
+        const existingBookings = await FirestoreREST.query<Booking>('bookings', {
+            where: [
+                { field: 'tutorId', op: 'EQUAL', value: bookingData.tutorId },
+                { field: 'startTime', op: 'EQUAL', value: startTime }
+            ]
+        });
+
+        // Check if any booking for this slot is active
+        const hasActiveBooking = existingBookings.some(b => {
+            const bDateSeconds = (b.date as any)?.seconds || 0;
+            return bDateSeconds === dateSeconds && !['cancelled', 'rejected'].includes(b.status);
+        });
+
+        if (hasActiveBooking) {
             throw new Error('This time slot is already booked. Please select another time.');
         }
 
@@ -59,8 +75,9 @@ export class BookingService {
         return bookingId;
     }
 
-    // Cache for user phone numbers
+    // Cache for user phone numbers and addresses
     private static phoneCache = new Map<string, string>();
+    private static addressCache = new Map<string, string>();
 
     private static async getPhoneNumber(userId: string): Promise<string | undefined> {
         if (this.phoneCache.has(userId)) return this.phoneCache.get(userId);
@@ -76,23 +93,68 @@ export class BookingService {
         }
     }
 
+    private static async getTutorAddress(userId: string): Promise<string | undefined> {
+        if (this.addressCache.has(userId)) return this.addressCache.get(userId);
+
+        try {
+            const user = await FirestoreREST.getDoc<User>('users', userId);
+            const address = user?.tutorProfile?.address || user?.tutorProfile?.city; // Fallback to city
+            if (address) this.addressCache.set(userId, address);
+            return address;
+        } catch (e) {
+            console.error("Error fetching address for", userId, e);
+            return undefined;
+        }
+    }
+
+    private static async getStudentAddress(userId: string): Promise<string | undefined> {
+        // Use a composite key or separate cache if needed, but since UIDs are unique, reuse addressCache is safe 
+        // IF we assume a user's address doesn't change based on context (tutor vs student). 
+        // However, here we just want *an* address.
+        if (this.addressCache.has(userId)) return this.addressCache.get(userId);
+
+        try {
+            const user = await FirestoreREST.getDoc<User>('users', userId);
+            const address = user?.studentProfile?.address || user?.studentProfile?.city;
+            if (address) this.addressCache.set(userId, address);
+            return address;
+        } catch (e) {
+            console.error("Error fetching student address for", userId, e);
+            return undefined;
+        }
+    }
+
     // Get single booking by ID
-    static async getBookingById(bookingId: string): Promise<(Booking & { tutorPhoneNumber?: string; studentPhoneNumber?: string }) | null> {
+    static async getBookingById(bookingId: string): Promise<(Booking & { tutorPhoneNumber?: string; studentPhoneNumber?: string; tutorAddress?: string }) | null> {
         try {
             const booking = await FirestoreREST.getDoc<Booking>('bookings', bookingId);
             if (!booking) return null;
 
             let tutorPhoneNumber: string | undefined;
             let studentPhoneNumber: string | undefined;
+            let tutorAddress: string | undefined;
 
             try {
-                if (booking.tutorId) tutorPhoneNumber = await this.getPhoneNumber(booking.tutorId);
-                if (booking.studentId) studentPhoneNumber = await this.getPhoneNumber(booking.studentId);
+                if (booking.tutorId) {
+                    tutorPhoneNumber = await this.getPhoneNumber(booking.tutorId);
+                    tutorAddress = await this.getTutorAddress(booking.tutorId);
+                }
+                if (booking.studentId) {
+                    studentPhoneNumber = await this.getPhoneNumber(booking.studentId);
+
+                    // Fallback to profile address if missing in booking
+                    if (!booking.address) {
+                        const profileAddress = await this.getStudentAddress(booking.studentId);
+                        if (profileAddress) {
+                            booking.address = profileAddress;
+                        }
+                    }
+                }
             } catch (error) {
-                console.error('Error fetching user phone numbers:', error);
+                console.error('Error fetching user details:', error);
             }
 
-            return { ...booking, tutorPhoneNumber, studentPhoneNumber };
+            return { ...booking, tutorPhoneNumber, studentPhoneNumber, tutorAddress };
         } catch (error) {
             console.error('Error fetching booking:', error);
             return null;
@@ -100,7 +162,7 @@ export class BookingService {
     }
 
     // Get student's bookings
-    static async getStudentBookings(studentId: string): Promise<(Booking & { id: string, tutorPhoneNumber?: string })[]> {
+    static async getStudentBookings(studentId: string): Promise<(Booking & { id: string, tutorPhoneNumber?: string, tutorAddress?: string })[]> {
         console.log('getStudentBookings called with studentId:', studentId);
 
         const bookings = await FirestoreREST.query<Booking>('bookings', {
@@ -108,13 +170,15 @@ export class BookingService {
             orderBy: [{ field: 'date', direction: 'DESCENDING' }]
         });
 
-        // Fetch phone numbers
+        // Fetch phone numbers and addresses
         const results = await Promise.all(bookings.map(async (booking) => {
             let tutorPhoneNumber: string | undefined;
+            let tutorAddress: string | undefined;
             if (booking.tutorId) {
                 tutorPhoneNumber = await this.getPhoneNumber(booking.tutorId);
+                tutorAddress = await this.getTutorAddress(booking.tutorId);
             }
-            return { ...booking, tutorPhoneNumber };
+            return { ...booking, tutorPhoneNumber, tutorAddress };
         }));
 
         return results;
@@ -188,7 +252,7 @@ export class BookingService {
 
         await FirestoreREST.updateDoc('bookings', bookingId, {
             status: 'cancelled',
-            notes: reason ? `Cancelled: ${reason}` : 'Cancelled',
+            notes: reason || 'Cancelled',
             updatedAt: FirestoreREST.serverTimestamp(),
         });
 

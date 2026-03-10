@@ -119,30 +119,39 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
         if (isFirstLoad.current) {
             isFirstLoad.current = false;
             console.log('[AuthGuard] First load complete');
-            // DISABLED: Don't sign out on first load - let OTP users complete signup
-            // if (user && !userData) {
-            //     signOut().then(() => {
-            //         router.replace('/welcome');
-            //     });
-            //     return;
-            // }
+
+            // Enforce strict registration: If profile incomplete (or has empty data/no role) on app launch, clear session
+            if (user && (!userData || !userData.role)) {
+                // If we are already on the signup or role-selection page, DO NOT sign out.
+                // This prevents loops where a page refresh (e.g. from permission dialogs) triggers this logout logic.
+                if (pathname === '/auth/signup' || pathname === '/auth/role-selection') {
+                    console.log('[AuthGuard] Incomplete profile on startup, but on signup page - allowing continuance');
+                    return;
+                }
+
+                console.log('[AuthGuard] Incomplete profile (no role) on startup - enforcing strict registration flow');
+                signOut().then(() => {
+                    router.replace('/auth/login');
+                });
+                return;
+            }
         }
 
         // 1. Unauthenticated User (neither web SDK nor native user)
         if (!effectiveUser) {
             console.log('[AuthGuard] No user (web or native), checking pathname:', pathname);
-            // If trying to access protected route, redirect to welcome
+            // If trying to access protected route, redirect to Login
             if (!PUBLIC_PATHS.includes(pathname)) {
-                console.log('[AuthGuard] Redirecting to welcome - no user on protected route');
-                router.push('/welcome');
+                console.log('[AuthGuard] Redirecting to login - no user on protected route');
+                router.push('/auth/login');
             }
             return;
         }
 
         // 2. Authenticated but Incomplete Profile  
-        // (Has user from web SDK or native, but no Firestore profile)
-        if (effectiveUser && !userData) {
-            console.log('[AuthGuard] User authenticated but no profile data');
+        // (Has user from web SDK or native, but no Firestore profile or missing role)
+        if (effectiveUser && (!userData || !userData.role)) {
+            console.log('[AuthGuard] User authenticated but no profile data (or role missing)');
 
             // Skip redirect for admin login page - admins use email auth and should have profiles
             // Also skip for /admin path - allow admins to access while their data loads
@@ -156,8 +165,8 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
                 return;
             }
 
-            // Force to signup page if not already there, BUT skip if on login page (to allow OTPLogin to handle redirect with role)
-            if (pathname !== '/auth/signup' && pathname !== '/auth/login' && !isAdminPath) {
+            // Force to signup page if not already there, BUT skip if on login page or role selection page
+            if (pathname !== '/auth/signup' && pathname !== '/auth/login' && pathname !== '/auth/role-selection' && !isAdminPath) {
                 console.log('[AuthGuard] Redirecting to signup');
                 // Preserve role parameter from current URL if present
                 const urlParams = typeof window !== 'undefined' ? new URLSearchParams(window.location.search) : null;
@@ -217,8 +226,8 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     const isEmailUser = effectiveUser?.email && !effectiveUser?.phoneNumber;
     const isAdminPath = pathname.startsWith('/admin') || pathname === '/auth/admin/login';
 
-    if (effectiveUser && !userData && pathname !== '/auth/signup' && pathname !== '/auth/login' && !isAdminPath && !isEmailUser) {
-        console.log('[AuthGuard] Blocking render - phone user with no data on non-signup path');
+    if (effectiveUser && (!userData || !userData.role) && pathname !== '/auth/signup' && pathname !== '/auth/login' && pathname !== '/auth/role-selection' && !isAdminPath && !isEmailUser) {
+        console.log('[AuthGuard] Blocking render - phone user with no data (or role) on non-signup path');
         return null;
     }
 

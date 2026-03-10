@@ -62,25 +62,35 @@ export class ChatService {
         });
     }
 
-    // Get messages for a chat (subcollection - needs special handling)
+    // Get messages for a chat (Using root 'messages' collection)
     static async getMessages(chatId: string): Promise<(Message & { id: string })[]> {
-        // Note: REST API subcollection path
-        return FirestoreREST.query<Message & { id: string }>(`chats/${chatId}/messages`, {
-            orderBy: [{ field: 'timestamp', direction: 'ASCENDING' }]
+        // Query root collection by chatId
+        const messages = await FirestoreREST.query<Message & { id: string }>('messages', {
+            where: [{ field: 'chatId', op: 'EQUAL', value: chatId }],
+            // Client-side sort for now to avoid potential index issues during dev
+        });
+
+        // Client-side sort (Ascending order)
+        return messages.sort((a, b) => {
+            const timeA = (a.timestamp as any)?.seconds || 0;
+            const timeB = (b.timestamp as any)?.seconds || 0;
+            return timeA - timeB;
         });
     }
 
     // Send a message
     static async sendMessage(chatId: string, senderId: string, text: string): Promise<void> {
         const messageData = {
+            chatId, // Add chatId reference
             senderId,
             text,
             timestamp: FirestoreREST.serverTimestamp(),
             read: false,
+            status: 'sent',
         };
 
-        // Add message to subcollection
-        await FirestoreREST.addDoc(`chats/${chatId}/messages`, messageData);
+        // Add message to root collection
+        await FirestoreREST.addDoc('messages', messageData);
 
         // Get chat to find other user
         const chat = await FirestoreREST.getDoc<Chat>('chats', chatId);
@@ -97,8 +107,11 @@ export class ChatService {
         // Note: Increment unread count manually
         if (otherUserId && chat.unreadCount) {
             const currentCount = chat.unreadCount[otherUserId] || 0;
+            // Use nested object structure for updateDoc to ensure map value is updated correctly
             await FirestoreREST.updateDoc('chats', chatId, {
-                [`unreadCount.${otherUserId}`]: currentCount + 1,
+                unreadCount: {
+                    [otherUserId]: currentCount + 1
+                }
             });
         }
 
@@ -126,13 +139,17 @@ export class ChatService {
 
     // Mark messages as read
     static async markMessagesAsRead(chatId: string, userId: string): Promise<void> {
+        // Use nested object structure for updateDoc
         await FirestoreREST.updateDoc('chats', chatId, {
-            [`unreadCount.${userId}`]: 0,
+            unreadCount: {
+                [userId]: 0
+            }
         });
 
-        // Get unread messages and mark them as read
-        const messages = await FirestoreREST.query<Message & { id: string }>(`chats/${chatId}/messages`, {
+        // Get unread messages from root collection
+        const messages = await FirestoreREST.query<Message & { id: string }>('messages', {
             where: [
+                { field: 'chatId', op: 'EQUAL', value: chatId },
                 { field: 'read', op: 'EQUAL', value: false }
             ]
         });
@@ -141,7 +158,10 @@ export class ChatService {
         await Promise.all(
             messages
                 .filter(msg => msg.senderId !== userId)
-                .map(msg => FirestoreREST.updateDoc(`chats/${chatId}/messages`, msg.id, { read: true }))
+                .map(msg => FirestoreREST.updateDoc('messages', msg.id, {
+                    read: true,
+                    status: 'seen'
+                }))
         );
     }
 

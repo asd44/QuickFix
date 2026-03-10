@@ -39,14 +39,21 @@ function VerificationDetailsContent() {
 
     const [showConfirm, setShowConfirm] = useState(false);
     const [actionType, setActionType] = useState<'approved' | 'rejected' | null>(null);
+    const [rejectionReason, setRejectionReason] = useState('');
 
     const initiateAction = (type: 'approved' | 'rejected') => {
         setActionType(type);
+        setRejectionReason(''); // Reset reason
         setShowConfirm(true);
     };
 
     const confirmAction = async () => {
         if (!provider || !userId || !actionType) return;
+        if (actionType === 'rejected' && !rejectionReason.trim()) {
+            alert('Please provide a reason for rejection.');
+            return;
+        }
+
         setProcessing(true);
         try {
             // Use proper nested object structure for update
@@ -55,7 +62,7 @@ function VerificationDetailsContent() {
                     verified: actionType === 'approved',
                     kyc: {
                         status: actionType,
-                        ...(actionType === 'rejected' && { rejectionReason: 'Documents did not match criteria.' })
+                        ...(actionType === 'rejected' && { rejectionReason: rejectionReason.trim() })
                     }
                 }
             };
@@ -220,10 +227,30 @@ function VerificationDetailsContent() {
                                     <p className="text-yellow-600">No documents submitted yet.</p>
                                 )}
 
+                                {/* Show Revoke button for verified providers */}
+                                {provider.tutorProfile?.verified && (
+                                    <div className="pt-4 flex flex-col md:flex-row gap-4 border-t mt-4 items-center">
+                                        <div className="flex-1 w-full text-sm text-green-700 bg-green-50 p-3 rounded border border-green-200 flex items-center justify-center md:justify-start">
+                                            <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                                            Currently Verified
+                                        </div>
+                                        <Button
+                                            type="button"
+                                            onClick={() => initiateAction('rejected')}
+                                            disabled={processing}
+                                            variant="destructive"
+                                            className="w-full md:w-auto md:flex-1"
+                                        >
+                                            Revoke Verification
+                                        </Button>
+                                    </div>
+                                )}
+
                                 {/* Always show approval buttons for unverified providers */}
                                 {!provider.tutorProfile?.verified && (
                                     <div className="pt-4 flex gap-4 border-t mt-4">
                                         <Button
+                                            type="button"
                                             onClick={() => initiateAction('approved')}
                                             disabled={processing}
                                             className="flex-1 bg-green-600 hover:bg-green-700 text-white"
@@ -231,6 +258,7 @@ function VerificationDetailsContent() {
                                             Approve
                                         </Button>
                                         <Button
+                                            type="button"
                                             onClick={() => initiateAction('rejected')}
                                             disabled={processing}
                                             variant="destructive"
@@ -251,11 +279,29 @@ function VerificationDetailsContent() {
                         <div className="bg-white rounded-lg p-6 max-w-sm w-full shadow-xl space-y-4">
                             <h3 className="text-lg font-bold text-gray-900">Confirm Action</h3>
                             <p className="text-gray-600">
-                                Are you sure you want to {actionType === 'approved' ? 'approve' : 'reject'} this provider?
-                                {actionType === 'approved' ? ' They will be verified immediately.' : ' This action will mark the request as rejected.'}
+                                Are you sure you want to {actionType === 'approved' ? 'approve' : (provider.tutorProfile?.verified ? 'revoke verification for' : 'reject')} this provider?
+                                {actionType === 'approved'
+                                    ? ' They will be verified immediately.'
+                                    : (provider.tutorProfile?.verified
+                                        ? ' Their verified status will be removed immediately.'
+                                        : ' This action will mark the request as rejected.')}
                             </p>
+
+                            {actionType === 'rejected' && (
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Reason for Rejection <span className="text-red-500">*</span></label>
+                                    <textarea
+                                        value={rejectionReason}
+                                        onChange={(e) => setRejectionReason(e.target.value)}
+                                        placeholder="e.g. ID is blurry, Name mismatch..."
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-red-500 focus:border-transparent text-sm"
+                                        rows={3}
+                                    />
+                                </div>
+                            )}
                             <div className="flex gap-3 pt-2">
                                 <Button
+                                    type="button"
                                     onClick={() => setShowConfirm(false)}
                                     variant="outline"
                                     className="flex-1"
@@ -264,6 +310,7 @@ function VerificationDetailsContent() {
                                     Cancel
                                 </Button>
                                 <Button
+                                    type="button"
                                     onClick={confirmAction}
                                     className={`flex-1 ${actionType === 'approved' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'} text-white`}
                                     disabled={processing}
@@ -273,9 +320,10 @@ function VerificationDetailsContent() {
                             </div>
                         </div>
                     </div>
-                )}
-            </main>
-        </div>
+                )
+                }
+            </main >
+        </div >
     );
 }
 

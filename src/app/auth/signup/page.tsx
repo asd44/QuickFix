@@ -4,11 +4,11 @@ import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/Button';
-import { CustomSelect } from '@/components/CustomSelect';
 import { UserRole, User } from '@/lib/types/database';
 import { FirestoreREST, NativeAuth } from '@/lib/firebase/nativeFirestore';
 import { Capacitor } from '@capacitor/core';
 import { Suspense } from 'react';
+import { LocationPicker } from '@/components/LocationPicker';
 
 function SignupContent() {
     const { user, userData, loading: authLoading, signOut } = useAuth();
@@ -25,14 +25,17 @@ function SignupContent() {
         return 'student';
     });
 
-    const [firstName, setFirstName] = useState('');
-    const [lastName, setLastName] = useState('');
-    const [gender, setGender] = useState('');
-    const [city, setCity] = useState('');
-    const [coordinates, setCoordinates] = useState<{ latitude: number; longitude: number } | null>(null);
+    const [formData, setFormData] = useState({
+        firstName: '',
+        lastName: '',
+        address: '',
+        city: '',
+        area: '',
+        coordinates: null as { latitude: number; longitude: number; } | null,
+    });
+
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
-    const [detectingLocation, setDetectingLocation] = useState(false);
 
     // Native Capacitor Firebase user (for when web SDK auth isn't synced)
     const [nativeUser, setNativeUser] = useState<{ uid: string; phoneNumber: string | null } | null>(null);
@@ -96,44 +99,27 @@ function SignupContent() {
         }
     };
 
-    // Auto-detect location on mount
+    // Auto-detect location on mount - DISABLED per user request to prevent refresh loops
+    // Users must manually click "Detect Location" if they want to use this feature.
+    /*
     useEffect(() => {
-        detectLocation();
+        // Code removed to prevent auto-detection loops
     }, []);
+    */
 
-    const detectLocation = () => {
-        if (!navigator.geolocation) {
-            setError('Geolocation is not supported by your browser');
-            return;
-        }
+    const handleLocationSelect = (data: { address: string; city: string; area: string; coordinates: { latitude: number; longitude: number; } }) => {
+        setFormData(prev => ({
+            ...prev,
+            address: data.address, // We might not have a dedicated address field in the UI shown before, but good to store
+            city: data.city,
+            area: data.area,
+            coordinates: data.coordinates
+        }));
+    };
 
-        setDetectingLocation(true);
-        setError('');
-
-        navigator.geolocation.getCurrentPosition(async (position) => {
-            const { latitude, longitude } = position.coords;
-            setCoordinates({ latitude, longitude });
-
-            try {
-                // Reverse geocoding using OpenStreetMap Nominatim
-                const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`);
-                const data = await response.json();
-
-                if (data.address) {
-                    const detectedCity = data.address.city || data.address.town || data.address.village || data.address.state_district || '';
-                    if (detectedCity) {
-                        setCity(detectedCity);
-                    }
-                }
-            } catch (err) {
-                console.warn('Failed to detect city name:', err);
-            } finally {
-                setDetectingLocation(false);
-            }
-        }, (err) => {
-            console.error('Geolocation error:', err);
-            setDetectingLocation(false);
-        });
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const { name, value } = e.target;
+        setFormData(prev => ({ ...prev, [name]: value }));
     };
 
     const handleProfileCreation = async (e: React.FormEvent) => {
@@ -191,18 +177,20 @@ function SignupContent() {
                 createdAt: FirestoreREST.serverTimestamp() as any,
                 ...(role === 'student' && {
                     studentProfile: {
-                        firstName,
-                        lastName,
-                        gender,
-                        city,
+                        firstName: formData.firstName,
+                        lastName: formData.lastName,
+                        gender: '',
+                        city: formData.city,
+                        area: formData.area || '', // Added area
+                        address: formData.address || '', // Added address
                         favorites: [],
-                        coordinates: coordinates || undefined,
+                        coordinates: formData.coordinates || undefined,
                     },
                 }),
                 ...(role === 'tutor' && {
                     tutorProfile: {
-                        firstName,
-                        lastName,
+                        firstName: formData.firstName,
+                        lastName: formData.lastName,
                         bio: '',
                         subjects: selectedCategories,
                         grades: [],
@@ -210,14 +198,15 @@ function SignupContent() {
                         experience: 0,
                         teachingType: [],
                         gender: '',
-                        city,
-                        area: '',
+                        city: formData.city,
+                        area: formData.area || '', // Added area
+                        address: formData.address || '', // Added address
                         verified: false,
                         verificationDocuments: [],
                         averageRating: 0,
                         totalRatings: 0,
                         profileViews: 0,
-                        coordinates: coordinates || undefined,
+                        coordinates: formData.coordinates || undefined,
                         subscription: {
                             plan: null,
                             status: 'pending',
@@ -249,18 +238,20 @@ function SignupContent() {
     // Check if authenticated user already has a complete profile
     useEffect(() => {
         console.log('[SignupPage] useEffect:', { authLoading, hasUser: !!user, hasUserData: !!userData, hasNativeUser: !!nativeUser });
-        if (!authLoading && user && userData) {
-            // User is authenticated AND has profile data - redirect to home
-            console.log('[SignupPage] Has profile, redirecting to home');
+        // STRICTION CHECK: Only redirect if user has a ROLE. 
+        // Simply having userData (which might be empty or incomplete) is not enough.
+        if (!authLoading && user && userData?.role) {
+            // User is authenticated AND has complete profile (role exists) - redirect to home
+            console.log('[SignupPage] Has complete profile (role exists), redirecting to home');
             router.push('/');
         }
     }, [authLoading, user, userData, router, nativeUser]);
 
-    // Use web user first, fall back to native user
-    const effectiveUser = user || nativeUser;
-    const isLoading = authLoading || checkingNativeAuth;
+    // Use AuthContext as source of truth
+    const effectiveUser = user;
+    const isLoading = authLoading;
 
-    console.log('[SignupPage] Render:', { authLoading, checkingNativeAuth, hasUser: !!user, hasNativeUser: !!nativeUser, effectiveUser: !!effectiveUser });
+    console.log('[SignupPage] Render:', { authLoading, hasUser: !!user });
 
     // Show loading while checking auth state
     if (isLoading) {
@@ -272,7 +263,7 @@ function SignupContent() {
         );
     }
 
-    // If no user at all (neither web nor native), redirect to login
+    // If no user at all, redirect to login
     if (!effectiveUser) {
         console.log('[SignupPage] No user found, redirecting to login');
         router.push('/auth/login');
@@ -319,8 +310,9 @@ function SignupContent() {
                                 <label className="text-sm font-semibold text-gray-700 ml-1">First Name</label>
                                 <input
                                     type="text"
-                                    value={firstName}
-                                    onChange={(e) => setFirstName(e.target.value)}
+                                    name="firstName"
+                                    value={formData.firstName}
+                                    onChange={handleChange}
                                     className="w-full p-4 rounded-xl border border-gray-200 bg-gray-50/50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-lg"
                                     placeholder="John"
                                     required
@@ -330,28 +322,16 @@ function SignupContent() {
                                 <label className="text-sm font-semibold text-gray-700 ml-1">Last Name</label>
                                 <input
                                     type="text"
-                                    value={lastName}
-                                    onChange={(e) => setLastName(e.target.value)}
+                                    name="lastName"
+                                    value={formData.lastName}
+                                    onChange={handleChange}
                                     className="w-full p-4 rounded-xl border border-gray-200 bg-gray-50/50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-lg"
                                     placeholder="Doe"
                                     required
                                 />
                             </div>
                         </div>
-                        {role === 'student' && (
-                            <CustomSelect
-                                label="Gender"
-                                value={gender}
-                                onChange={(val) => setGender(val)}
-                                options={[
-                                    { value: 'Male', label: 'Male' },
-                                    { value: 'Female', label: 'Female' },
-                                    { value: 'Others', label: 'Others' }
-                                ]}
-                                placeholder="Select Gender"
-                                className="p-4 rounded-xl border border-gray-200 bg-gray-50/50 focus:bg-white focus:ring-2 focus:ring-primary/20 focus:border-primary text-lg"
-                            />
-                        )}
+
                     </div>
 
                     {/* Role Specific Fields */}
@@ -394,43 +374,37 @@ function SignupContent() {
                     <div className="space-y-6">
                         <h2 className="text-lg font-bold text-gray-900 border-b pb-2">Location</h2>
                         <div className="space-y-2">
-                            <label className="text-sm font-semibold text-gray-700 ml-1">Your City</label>
-                            <div className="flex gap-3">
-                                <div className="relative flex-1">
-                                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                                        <svg className="h-6 w-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-                                    </div>
-                                    <input
-                                        type="text"
-                                        value={city}
-                                        onChange={(e) => setCity(e.target.value)}
-                                        className="w-full pl-12 h-14 rounded-xl border border-gray-200 bg-gray-50/50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-lg"
-                                        placeholder="e.g., Mumbai"
-                                        required
-                                    />
-                                </div>
-                                <Button
-                                    type="button"
-                                    variant="outline"
-                                    onClick={detectLocation}
-                                    disabled={detectingLocation}
-                                    className="whitespace-nowrap px-6 border-gray-200 hover:bg-gray-50 hover:text-primary rounded-xl h-14"
-                                >
-                                    {detectingLocation ? (
-                                        <span className="flex items-center gap-2">
-                                            <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                                        </span>
-                                    ) : (
-                                        <span className="text-sm font-medium">Detect Location</span>
-                                    )}
-                                </Button>
+                            <label className="text-sm font-semibold text-gray-700 ml-1">Your Location</label>
+                            <LocationPicker
+                                onLocationSelect={handleLocationSelect}
+                                defaultValue=""
+                                className="w-full"
+                            />
+                            <p className="text-xs text-gray-500 ml-1">Search your city or use GPS</p>
+                        </div>
+
+                        {/* Hidden fields for visual confirmation if needed, OR we can show them read-only */}
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="text-sm font-semibold text-gray-700 ml-1">City</label>
+                                <input
+                                    type="text"
+                                    value={formData.city}
+                                    readOnly
+                                    className="w-full p-3 rounded-xl border border-gray-100 bg-gray-50 text-gray-600 cursor-not-allowed"
+                                    placeholder="Auto-filled"
+                                />
                             </div>
-                            {coordinates && (
-                                <p className="text-sm text-emerald-600 flex items-center gap-2 font-medium animate-fade-in bg-emerald-50 p-2 rounded-lg">
-                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                                    GPS Coordinates captured
-                                </p>
-                            )}
+                            <div>
+                                <label className="text-sm font-semibold text-gray-700 ml-1">Area</label>
+                                <input
+                                    type="text"
+                                    value={formData.area}
+                                    readOnly
+                                    className="w-full p-3 rounded-xl border border-gray-100 bg-gray-50 text-gray-600 cursor-not-allowed"
+                                    placeholder="Auto-filled"
+                                />
+                            </div>
                         </div>
                     </div>
 
@@ -451,8 +425,7 @@ function SignupContent() {
                         <button
                             type="button"
                             onClick={() => {
-                                signOut();
-                                router.push('/welcome');
+                                router.push('/auth/role-selection');
                             }}
                             className="text-sm font-medium text-gray-500 hover:text-gray-900 transition-colors"
                         >

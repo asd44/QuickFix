@@ -140,39 +140,73 @@ export class TutorService {
         const idUrl = await StorageService.uploadVerificationDocument(userId, data.idFile);
 
         // 3. Update User Profile
+        // Use nested object structure for proper Firestore merging
         await FirestoreREST.updateDoc('users', userId, {
-            'tutorProfile.kyc': {
-                status: 'pending',
-                submittedAt: new Date().toISOString(),
-                idProofUrl: idUrl,
-                photoUrl: selfieUrl,
-                idType: data.idType,
-                idNumber: data.idNumber
-            },
-            'tutorProfile.verificationDocuments': [idUrl, selfieUrl],
-            'tutorProfile.verified': false
+            tutorProfile: {
+                kyc: {
+                    status: 'pending',
+                    submittedAt: new Date().toISOString(),
+                    idProofUrl: idUrl,
+                    photoUrl: selfieUrl,
+                    idType: data.idType,
+                    idNumber: data.idNumber
+                },
+                verificationDocuments: [idUrl, selfieUrl],
+                verified: false,
+                profilePicture: selfieUrl // Auto-set profile picture from selfie
+            }
         });
     }
 
     // Toggle profile activation status
     static async toggleProfileStatus(uid: string, isActivated: boolean): Promise<void> {
         await FirestoreREST.updateDoc('users', uid, {
-            'tutorProfile.isActivated': isActivated
+            tutorProfile: {
+                isActivated: isActivated
+            }
         });
     }
 
     // Toggle profile suspension status (Admin only)
     static async toggleSuspensionStatus(uid: string, isSuspended: boolean): Promise<void> {
         const updates: any = {
-            'tutorProfile.isSuspended': isSuspended,
-            'tutorProfile.isActivated': !isSuspended,
+            tutorProfile: {
+                isSuspended: isSuspended,
+                isActivated: !isSuspended,
+            }
         };
 
         if (!isSuspended) {
-            updates['tutorProfile.subscription.status'] = 'active';
-            updates['tutorProfile.verified'] = true;
+            updates.tutorProfile.subscription = { status: 'active' };
+            updates.tutorProfile.verified = true;
         }
 
         await FirestoreREST.updateDoc('users', uid, updates);
+    }
+
+    // Activate 30-day trial subscription
+    static async activateSubscriptionTrial(uid: string): Promise<void> {
+        // 1. Fetch user to verify KYC status first
+        const user = await FirestoreREST.getDoc<User>('users', uid);
+
+        if (!user?.tutorProfile?.verified) {
+            throw new Error('You must complete KYC verification before starting a trial.');
+        }
+
+        const startDate = new Date();
+        const endDate = new Date();
+        endDate.setDate(endDate.getDate() + 30); // 30 days from now
+
+        await FirestoreREST.updateDoc('users', uid, {
+            tutorProfile: {
+                subscription: {
+                    plan: 'monthly',
+                    status: 'active',
+                    startDate: startDate.toISOString(), // Use ISO strings for REST API compatibility
+                    endDate: endDate.toISOString(),
+                    isTrial: true
+                }
+            }
+        });
     }
 }

@@ -1,15 +1,10 @@
-import { collection, addDoc, getDocs, doc, getDoc, updateDoc, setDoc, deleteDoc, query, where, orderBy, limit, Timestamp, increment } from 'firebase/firestore';
-import { db } from '@/lib/firebase/config';
+import { FirestoreREST } from '@/lib/firebase/nativeFirestore';
 import { User, StudentProfile, TutorProfile } from '@/lib/types/database';
 
 export class UserService {
     // Get user by ID
     static async getUserById(uid: string): Promise<User | null> {
-        const userDoc = await getDoc(doc(db, 'users', uid));
-        if (userDoc.exists()) {
-            return userDoc.data() as User;
-        }
-        return null;
+        return await FirestoreREST.getDoc<User>('users', uid);
     }
 
     // Get user profile (alias for getUserById)
@@ -19,16 +14,12 @@ export class UserService {
 
     // Update student profile
     static async updateStudentProfile(uid: string, profile: Partial<StudentProfile>): Promise<void> {
-        await setDoc(doc(db, 'users', uid), {
-            studentProfile: profile,
-        }, { merge: true });
+        await FirestoreREST.updateDoc('users', uid, { studentProfile: profile });
     }
 
     // Update tutor profile
     static async updateTutorProfile(uid: string, profile: Partial<TutorProfile>): Promise<void> {
-        await setDoc(doc(db, 'users', uid), {
-            tutorProfile: profile,
-        }, { merge: true });
+        await FirestoreREST.updateDoc('users', uid, { tutorProfile: profile });
     }
 
     // Add tutor to favorites
@@ -53,17 +44,20 @@ export class UserService {
         }
     }
 
-    // Increment profile views (public)
+    // Increment profile views
     static async incrementProfileViews(userId: string): Promise<void> {
-        const userRef = doc(db, 'users', userId);
-        await updateDoc(userRef, {
-            'tutorProfile.profileViews': increment(1),
-        });
+        // Get current value and increment (REST API doesn't support atomic increment easily)
+        const user = await this.getUserById(userId);
+        if (user?.tutorProfile) {
+            const currentViews = user.tutorProfile.profileViews || 0;
+            await FirestoreREST.updateDoc('users', userId, {
+                'tutorProfile.profileViews': currentViews + 1
+            });
+        }
     }
 
     // Generic update profile method
     static async updateProfile(userId: string, updates: any): Promise<void> {
-        const userRef = doc(db, 'users', userId);
-        await updateDoc(userRef, updates);
+        await FirestoreREST.updateDoc('users', userId, updates);
     }
 }

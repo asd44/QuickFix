@@ -13,48 +13,79 @@ import { Button } from '@/components/Button';
 import { Badge } from '@/components/Badge';
 import { RatingModal } from '@/components/RatingModal';
 
+// Helper to safely convert timestamp to Date
+function toDateSafe(timestamp: any): Date {
+    if (!timestamp) return new Date();
+    if (timestamp instanceof Date) return timestamp;
+    if (timestamp.toDate) return timestamp.toDate();
+    if (timestamp.seconds) return new Date(timestamp.seconds * 1000);
+    return new Date(timestamp);
+}
+
 function BookingDetailsContent() {
-    const { user } = useAuth();
+    const { user, userData } = useAuth();
     const router = useRouter();
     const searchParams = useSearchParams();
     const bookingId = searchParams.get('id');
 
-    const [booking, setBooking] = useState<(Booking & { id: string, tutorPhoneNumber?: string }) | null>(null);
+    const [booking, setBooking] = useState<(Booking & { id: string, tutorPhoneNumber?: string, tutorAddress?: string }) | null>(null);
     const [loading, setLoading] = useState(true);
     const [regeneratingCode, setRegeneratingCode] = useState(false);
     const [ratingModalOpen, setRatingModalOpen] = useState(false);
+    const [hasRatedLocally, setHasRatedLocally] = useState(false);
+
+    const [userRating, setUserRating] = useState<{ stars: number, comment: string } | null>(null);
 
     useEffect(() => {
         if (user && bookingId) {
-            loadBookingDetails();
+            setLoading(true);
+
+            // 1. Check Local Storage FIRST
+            const localRated = localStorage.getItem(`rated_${bookingId}`);
+            if (localRated === 'true') {
+                setHasRatedLocally(true);
+            }
+
+            const unsubscribe = BookingService.listenToBooking(bookingId, async (updatedBooking) => {
+                if (updatedBooking) {
+                    setBooking(updatedBooking);
+
+                    if (updatedBooking.status === 'completed') {
+                        // Check if we need to verify rating status
+                        if (updatedBooking.rated || localRated === 'true' || !hasRatedLocally) {
+                            try {
+                                const ratings = await RatingService.getStudentRatings(user.uid);
+                                const myRating = ratings.find(r => r.sessionId === updatedBooking.id);
+
+                                if (myRating) {
+                                    setHasRatedLocally(true);
+                                    localStorage.setItem(`rated_${bookingId}`, 'true');
+                                    setUserRating({ stars: myRating.stars, comment: myRating.comment || '' });
+                                }
+                            } catch (e) {
+                                console.error("Failed to fetch user rating", e);
+                            }
+                        }
+                    }
+                } else {
+                    alert('Booking not found');
+                    router.back();
+                }
+                setLoading(false);
+            });
+            return () => unsubscribe();
         }
     }, [user, bookingId]);
-
-    const loadBookingDetails = async () => {
-        if (!bookingId) return;
-        setLoading(true);
-        try {
-            const bookingData = await BookingService.getBookingById(bookingId);
-            if (bookingData) {
-                setBooking({ ...bookingData, id: bookingId });
-            } else {
-                alert('Booking not found');
-                router.back();
-            }
-        } catch (error) {
-            console.error('Failed to load booking:', error);
-            alert('Failed to load booking details');
-        } finally {
-            setLoading(false);
-        }
-    };
 
     const handleCancelBooking = async () => {
         if (!booking || !confirm('Are you sure you want to cancel this booking?')) return;
 
+        const name = userData?.studentProfile ? `${userData.studentProfile.firstName} ${userData.studentProfile.lastName}` : 'student';
+        const reason = `Cancelled by ${name}`;
+
         try {
-            await BookingService.cancelBooking(booking.id, 'Cancelled by student');
-            loadBookingDetails();
+            await BookingService.cancelBooking(booking.id, reason);
+            // loadBookingDetails(); // Updated by listener
         } catch (error) {
             console.error('Failed to cancel booking:', error);
             alert('Failed to cancel booking');
@@ -68,7 +99,7 @@ function BookingDetailsContent() {
         try {
             const newCode = await BookingService.regenerateCompletionCode(booking.id);
             alert(`New completion code: ${newCode}`);
-            loadBookingDetails();
+            // loadBookingDetails(); // Updated by listener
         } catch (error) {
             console.error('Failed to regenerate code:', error);
             alert('Failed to regenerate code');
@@ -108,18 +139,20 @@ function BookingDetailsContent() {
                 booking.id
             );
 
-            // Mark booking as rated locally or re-fetch
-            const { doc, updateDoc, serverTimestamp } = await import('firebase/firestore');
-            const { db } = await import('@/lib/firebase/config');
-            await updateDoc(doc(db, 'bookings', booking.id), {
-                rated: true,
-                updatedAt: serverTimestamp(),
-            });
+            // Update local state ONLY - Do NOT try to update booking doc (prevents permission error)
+            setHasRatedLocally(true);
 
             alert('Thank you for your rating!');
-            loadBookingDetails();
         } catch (error: any) {
             console.error('Failed to submit rating:', error);
+
+            // If it was technically duplicate (caught by service), just treat as success for UI
+            if (error.message?.includes('already rated')) {
+                setHasRatedLocally(true);
+                alert('You have already rated this session.');
+                return;
+            }
+
             alert(error.message || 'Failed to submit rating');
         }
     };
@@ -140,7 +173,7 @@ function BookingDetailsContent() {
             });
 
             alert('Payment successful!');
-            loadBookingDetails();
+            // loadBookingDetails(); // Updated by listener
         } catch (error) {
             console.error('Failed to update payment:', error);
             alert('Failed to update payment status');
@@ -188,12 +221,18 @@ function BookingDetailsContent() {
                 <div className="bg-gray-50 rounded-2xl p-5">
                     <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-4">Service Provider</h3>
                     <div className="flex items-center gap-4">
-                        <div className="w-12 h-12 rounded-full bg-[#005461] text-white flex items-center justify-center text-xl font-bold">
+                        <div className="w-12 h-12 rounded-full bg-[#005461] text-white flex items-center justify-center text-xl font-bold flex-shrink-0">
                             {booking.tutorName?.[0] || 'P'}
                         </div>
                         <div>
-                            <h2 className="font-bold text-lg text-gray-900">{booking.tutorName || 'Service Provider'}</h2>
-                            <p className="text-gray-600">{booking.subject || 'General Service'}</p>
+                            <h2 className="font-bold text-lg text-gray-900 leading-tight">{booking.tutorName || 'Service Provider'}</h2>
+                            <p className="text-gray-600 text-sm mb-1">{booking.subject || 'General Service'}</p>
+                            {booking.tutorAddress && (
+                                <div className="flex items-start gap-1 text-xs text-gray-500 mt-1">
+                                    <span className="mt-0.5">📍</span>
+                                    <span>{booking.tutorAddress}</span>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -202,8 +241,8 @@ function BookingDetailsContent() {
                 <div className="grid grid-cols-2 gap-4">
                     <div className="bg-[#f0f9fa] rounded-2xl p-5">
                         <span className="block text-xs font-bold text-[#005461] uppercase tracking-wider mb-1">Date</span>
-                        <span className="block text-lg font-bold text-gray-900">{format(booking.date.toDate(), 'MMM dd, yyyy')}</span>
-                        <span className="block text-sm text-gray-500">{format(booking.date.toDate(), 'EEEE')}</span>
+                        <span className="block text-lg font-bold text-gray-900">{format(toDateSafe(booking.date), 'MMM dd, yyyy')}</span>
+                        <span className="block text-sm text-gray-500">{format(toDateSafe(booking.date), 'EEEE')}</span>
                     </div>
                     <div className="bg-[#f0f9fa] rounded-2xl p-5">
                         <span className="block text-xs font-bold text-[#005461] uppercase tracking-wider mb-1">Time</span>
@@ -236,7 +275,7 @@ function BookingDetailsContent() {
                             <span className="text-xs font-bold uppercase tracking-wider text-blue-800">Completion Code</span>
                             {booking.codeExpiresAt && (
                                 <span className="text-[10px] text-blue-600 bg-white/50 px-2 py-0.5 rounded-full">
-                                    Expires {format(booking.codeExpiresAt.toDate(), 'h:mm a')}
+                                    Expires {format(toDateSafe(booking.codeExpiresAt), 'h:mm a')}
                                 </span>
                             )}
                         </div>
@@ -285,7 +324,7 @@ function BookingDetailsContent() {
                         ) : (
                             <div className="flex items-center gap-2 text-sm text-green-700 bg-green-50 p-3 rounded-xl">
                                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                                Paid on {booking.paidAt ? format(booking.paidAt.toDate(), 'MMM dd, yyyy') : 'Unknown date'}
+                                Paid on {booking.paidAt ? format(toDateSafe(booking.paidAt), 'MMM dd, yyyy') : 'Unknown date'}
                             </div>
                         )}
                     </div>
@@ -314,7 +353,7 @@ function BookingDetailsContent() {
                         </>
                     )}
 
-                    {booking.status === 'completed' && !booking.rated && (
+                    {booking.status === 'completed' && !booking.rated && !hasRatedLocally && (
                         <Button
                             className="w-full h-12 rounded-xl bg-yellow-400 hover:bg-yellow-500 text-yellow-950 font-semibold"
                             onClick={() => setRatingModalOpen(true)}
@@ -334,6 +373,23 @@ function BookingDetailsContent() {
                     )}
                 </div>
             </div>
+
+            {/* Rating Display */}
+            {(booking.rated || hasRatedLocally) && userRating && (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-2xl p-5 mb-4">
+                    <h3 className="text-sm font-bold text-yellow-800 uppercase tracking-wider mb-3">Your Rating</h3>
+                    <div className="flex items-center gap-1 mb-2">
+                        {[1, 2, 3, 4, 5].map((star) => (
+                            <span key={star} className={`text-2xl ${star <= userRating.stars ? 'text-yellow-400' : 'text-gray-300'}`}>
+                                ★
+                            </span>
+                        ))}
+                    </div>
+                    {userRating.comment && (
+                        <p className="text-sm text-gray-700 italic">"{userRating.comment}"</p>
+                    )}
+                </div>
+            )}
 
             {/* Rating Modal */}
             <RatingModal

@@ -13,6 +13,15 @@ import { BackHeader } from '@/components/BackHeader';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { ChatService } from '@/lib/services/chat.service';
 
+// Helper to safely convert timestamp to Date (handles both Firebase Timestamp and plain objects)
+function toDateSafe(timestamp: any): Date {
+    if (!timestamp) return new Date();
+    if (timestamp instanceof Date) return timestamp;
+    if (timestamp.toDate) return timestamp.toDate();
+    if (timestamp.seconds) return new Date(timestamp.seconds * 1000);
+    return new Date(timestamp);
+}
+
 export default function TutorBookingsPage() {
     const { user, userData } = useAuth();
     const router = useRouter();
@@ -69,7 +78,13 @@ export default function TutorBookingsPage() {
 
     useEffect(() => {
         if (user?.uid) {
-            loadBookings();
+            setLoading(true);
+            const unsubscribe = BookingService.listenToTutorBookings(user.uid, (bookingsData) => {
+                console.log('Real-time bookings update:', bookingsData.length);
+                setBookings(bookingsData);
+                setLoading(false);
+            });
+            return () => unsubscribe();
         }
     }, [user?.uid]);
 
@@ -100,27 +115,12 @@ export default function TutorBookingsPage() {
         }
     }, [bookings]);
 
-    const loadBookings = async () => {
-        if (!user) return;
 
-        setLoading(true);
-        try {
-            console.log('Loading bookings for tutor:', user.uid);
-            const allBookings = await BookingService.getTutorBookings(user.uid);
-            console.log('Bookings fetched:', allBookings);
-            console.log('Number of bookings:', allBookings.length);
-            setBookings(allBookings);
-        } catch (error) {
-            console.error('Failed to load bookings:', error);
-        } finally {
-            setLoading(false);
-        }
-    };
 
     const handleAcceptBooking = async (bookingId: string) => {
         try {
             await BookingService.updateBookingStatus(bookingId, 'confirmed');
-            loadBookings();
+            // loadBookings(); // Auto-updated by listener
         } catch (error) {
             console.error('Failed to accept booking:', error);
             alert('Failed to accept booking');
@@ -129,9 +129,12 @@ export default function TutorBookingsPage() {
 
     const handleDeclineBooking = async (bookingId: string) => {
         const reason = prompt('Reason for declining (optional):');
+        const name = userData?.tutorProfile ? `${userData.tutorProfile.firstName} ${userData.tutorProfile.lastName}` : 'tutor';
+        const finalReason = `Cancelled by ${name}${reason ? ': ' + reason : ''}`;
+
         try {
-            await BookingService.cancelBooking(bookingId, reason || 'Declined by tutor');
-            loadBookings();
+            await BookingService.cancelBooking(bookingId, finalReason);
+            // loadBookings(); // Auto-updated by listener
         } catch (error) {
             console.error('Failed to decline booking:', error);
             alert('Failed to decline booking');
@@ -145,11 +148,11 @@ export default function TutorBookingsPage() {
         }
 
         try {
-            const code = await BookingService.startJobWithCode(bookingId, startCode);
-            alert(`Job started! Customer's completion code: ${code}\n\nCustomer will share this code with you after work is done.`);
+            await BookingService.startJobWithCode(bookingId, startCode);
+            alert('Job started successfully!');
             setStartingJob(null);
             setStartCode('');
-            loadBookings();
+            // loadBookings(); // Auto-updated by listener
         } catch (error: any) {
             console.error('Failed to start job:', error);
             alert(error.message || 'Failed to start job');
@@ -180,7 +183,7 @@ export default function TutorBookingsPage() {
             setCompletionCode('');
             setBillAmount('');
             setBillDetails('');
-            loadBookings();
+            // loadBookings(); // Auto-updated by listener
         } catch (error: any) {
             console.error('Failed to complete job:', error);
             alert(error.message || 'Failed to complete job');
@@ -197,11 +200,11 @@ export default function TutorBookingsPage() {
         return booking.status === filter;
     }).sort((a, b) => {
         if (filter === 'pending') {
-            const createdA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0;
-            const createdB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0;
+            const createdA = toDateSafe(a.createdAt).getTime();
+            const createdB = toDateSafe(b.createdAt).getTime();
             return createdB - createdA;
         }
-        const getTime = (b: Booking) => b.date?.toDate ? b.date.toDate().getTime() : 0;
+        const getTime = (b: Booking) => toDateSafe(b.date).getTime();
         return getTime(b) - getTime(a);
     });
 
@@ -222,50 +225,59 @@ export default function TutorBookingsPage() {
 
     return (
         <div className="min-h-screen bg-muted/30 pb-20">
-            {/* Header - Z-Index 50 to cover floating elements */}
-            <div className="pt-8 pb-4 px-4 bg-[#5A0E24] text-white sticky top-0 z-50 shadow-lg">
-                <div className="flex justify-between items-center mb-6">
-                    <div>
-                        <h1 className="text-2xl font-bold">My Services</h1>
-                        <p className="text-gray-200 text-sm">Manage your bookings</p>
-                    </div>
-                </div>
-
-                {/* Stats Tiles */}
-                <div className="grid grid-cols-2 gap-3 mb-6">
-                    <div className="bg-white/10 backdrop-blur-md border border-white/20 p-4 rounded-2xl relative overflow-hidden group hover:bg-white/15 transition-all duration-300">
-                        <div className="absolute top-0 right-0 w-16 h-16 bg-white/10 rounded-full -mr-8 -mt-8 blur-xl group-hover:bg-white/20 transition-all"></div>
-                        <p className="text-gray-200 text-xs font-medium uppercase tracking-wider mb-1">Pending Amount</p>
-                        <div className="flex items-baseline gap-1">
-                            <h3 className="text-3xl font-bold text-white">₹{pendingAmount}</h3>
-                            <span className="text-[10px] text-gray-300">waiting</span>
-                        </div>
-                    </div>
-
-                    <div className="bg-gradient-to-br from-[#771532] to-[#450a1b] p-4 rounded-2xl shadow-lg border border-[#white]/10 relative overflow-hidden group">
-                        <div className="absolute bottom-0 right-0 w-16 h-16 bg-[#5A0E24] rounded-full -mr-4 -mb-4 blur-xl"></div>
-                        <p className="text-gray-200 text-xs font-medium uppercase tracking-wider mb-1">Pending Jobs</p>
-                        <div className="flex items-baseline gap-1">
-                            <h3 className="text-3xl font-bold text-white">{tutorStats.pendingJobs}</h3>
-                            <span className="text-[10px] text-gray-300">active</span>
+            {/* Header Structure */}
+            <div className="bg-[#5A0E24] text-white">
+                {/* Fixed Title Section */}
+                <div className="fixed top-0 left-0 right-0 z-50 bg-[#5A0E24] pt-8 pb-4 px-4 shadow-md">
+                    <div className="flex justify-between items-center">
+                        <div>
+                            <h1 className="text-2xl font-bold">My Services</h1>
+                            <p className="text-gray-200 text-sm">Manage your bookings</p>
                         </div>
                     </div>
                 </div>
 
-                {/* Filter Tabs */}
-                <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
-                    {filters.map((f) => (
-                        <button
-                            key={f.id}
-                            onClick={() => setFilter(f.id as any)}
-                            className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all ${filter === f.id
-                                ? 'bg-white text-[#5A0E24] shadow-md'
-                                : 'bg-white/10 text-white hover:bg-white/20'
-                                }`}
-                        >
-                            {f.label}
-                        </button>
-                    ))}
+                {/* Spacer for Fixed Header */}
+                <div className="h-[120px] bg-[#5A0E24]"></div>
+
+                {/* Scrollable Content (Stats & Filters) */}
+                <div className="px-4 pb-4 bg-[#5A0E24]">
+                    {/* Stats Tiles */}
+                    <div className="grid grid-cols-2 gap-3 mb-6">
+                        <div className="bg-white/10 backdrop-blur-md border border-white/20 p-4 rounded-2xl relative overflow-hidden group hover:bg-white/15 transition-all duration-300">
+                            <div className="absolute top-0 right-0 w-16 h-16 bg-white/10 rounded-full -mr-8 -mt-8 blur-xl group-hover:bg-white/20 transition-all"></div>
+                            <p className="text-gray-200 text-xs font-medium uppercase tracking-wider mb-1">Pending Amount</p>
+                            <div className="flex items-baseline gap-1">
+                                <h3 className="text-3xl font-bold text-white">₹{pendingAmount}</h3>
+                                <span className="text-[10px] text-gray-300">waiting</span>
+                            </div>
+                        </div>
+
+                        <div className="bg-gradient-to-br from-[#771532] to-[#450a1b] p-4 rounded-2xl shadow-lg border border-[#white]/10 relative overflow-hidden group">
+                            <div className="absolute bottom-0 right-0 w-16 h-16 bg-[#5A0E24] rounded-full -mr-4 -mb-4 blur-xl"></div>
+                            <p className="text-gray-200 text-xs font-medium uppercase tracking-wider mb-1">Pending Jobs</p>
+                            <div className="flex items-baseline gap-1">
+                                <h3 className="text-3xl font-bold text-white">{tutorStats.pendingJobs}</h3>
+                                <span className="text-[10px] text-gray-300">active</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Filter Tabs */}
+                    <div className="flex gap-2 overflow-x-auto pb-2 scrollbar-hide">
+                        {filters.map((f) => (
+                            <button
+                                key={f.id}
+                                onClick={() => setFilter(f.id as any)}
+                                className={`px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-all ${filter === f.id
+                                    ? 'bg-white text-[#5A0E24] shadow-md'
+                                    : 'bg-white/10 text-white hover:bg-white/20'
+                                    }`}
+                            >
+                                {f.label}
+                            </button>
+                        ))}
+                    </div>
                 </div>
             </div>
 
@@ -324,15 +336,15 @@ export default function TutorBookingsPage() {
                                             <div className="flex items-center gap-3 my-2">
                                                 <div className="w-10 h-10 rounded-lg bg-[#5A0E24]/10 flex flex-col items-center justify-center text-[#5A0E24]">
                                                     <span className="text-[9px] uppercase font-bold">
-                                                        {format(booking.date.toDate(), 'MMM')}
+                                                        {format(toDateSafe(booking.date), 'MMM')}
                                                     </span>
                                                     <span className="text-lg font-bold leading-none">
-                                                        {format(booking.date.toDate(), 'dd')}
+                                                        {format(toDateSafe(booking.date), 'dd')}
                                                     </span>
                                                 </div>
                                                 <div>
                                                     <p className="font-semibold text-sm text-gray-900">
-                                                        {format(booking.date.toDate(), 'EEEE')}
+                                                        {format(toDateSafe(booking.date), 'EEEE')}
                                                     </p>
                                                     <p className="text-xs text-gray-500">
                                                         {booking.startTime}
@@ -559,20 +571,22 @@ export default function TutorBookingsPage() {
                                         <div className="mt-4 p-4 border rounded-lg bg-green-50 dark:bg-green-950/30">
                                             <div className="flex items-center justify-between">
                                                 <div>
-                                                    <h4 className="font-semibold text-sm">✔ Job Completed</h4>
+                                                    <div className="flex items-center gap-2">
+                                                        <h4 className="font-semibold text-sm">✔ Job Completed</h4>
+                                                        {booking.finalPaymentStatus === 'completed' && (
+                                                            <Badge variant="default" className="bg-green-600 h-5 px-2 text-[10px]">
+                                                                ✔ Paid
+                                                            </Badge>
+                                                        )}
+                                                        {booking.finalPaymentStatus === 'pending' && (
+                                                            <Badge variant="outline" className="text-[#5A0E24] border-[#5A0E24]/20 bg-[#5A0E24]/5 h-5 px-2 text-[10px]">
+                                                                Waiting
+                                                            </Badge>
+                                                        )}
+                                                    </div>
                                                     <p className="text-sm text-muted-foreground mt-1">
                                                         Final Bill: ₹{booking.finalBillAmount}
                                                     </p>
-                                                    {booking.finalPaymentStatus === 'pending' && (
-                                                        <Badge variant="outline" className="mt-2 text-[#5A0E24] border-[#5A0E24]/20 bg-[#5A0E24]/5">
-                                                            Waiting for payment
-                                                        </Badge>
-                                                    )}
-                                                    {booking.finalPaymentStatus === 'completed' && (
-                                                        <Badge variant="default" className="mt-2 bg-green-600">
-                                                            ✔ Paid
-                                                        </Badge>
-                                                    )}
                                                 </div>
                                             </div>
                                         </div>

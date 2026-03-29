@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect, Suspense, useRef } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/Card';
@@ -8,14 +8,13 @@ import { Badge } from '@/components/Badge';
 import { Button } from '@/components/Button';
 import { BookingModal, BookingData } from '@/components/BookingModal';
 import { useAuth } from '@/contexts/AuthContext';
-import { useDocument } from '@/lib/hooks/useDocument';
+// import { useDocument } from '@/lib/hooks/useDocument';
 import { User } from '@/lib/types/database';
 import { UserService } from '@/lib/services/user.service';
 import { InterestedStudentService } from '@/lib/services/interested-student.service';
 import { ChatService } from '@/lib/services/chat.service';
 import { RatingService } from '@/lib/services/rating.service';
 import { BookingService } from '@/lib/services/booking.service';
-import { Timestamp } from 'firebase/firestore';
 import { BackHeader } from '@/components/BackHeader';
 
 function TutorProfileContent() {
@@ -24,16 +23,41 @@ function TutorProfileContent() {
     const router = useRouter();
     const { user, userData } = useAuth();
 
-    // We can't use useDocument hook directly if tutorId is null, but the hook handles it?
-    // useDocument expects a string.
-    const { data: tutor, loading } = useDocument<User>('users', tutorId || 'dummy');
-
     const [ratings, setRatings] = useState<any[]>([]);
     const [showBookingModal, setShowBookingModal] = useState(false);
+    const [bookingTutorName, setBookingTutorName] = useState<string>(''); // Captured when modal opens
+
+    const [tutor, setTutor] = useState<User | null>(null);
+    const [loading, setLoading] = useState(true);
+    const viewTracked = useRef(false);
 
     useEffect(() => {
-        if (tutorId && tutor && user) {
-            // Track profile view
+        if (!tutorId) return;
+
+        let isMounted = true;
+        const fetchTutor = async () => {
+            try {
+                const { FirestoreREST } = await import('@/lib/firebase/nativeFirestore');
+                const doc = await FirestoreREST.getDoc<User>('users', tutorId);
+                if (isMounted) {
+                    setTutor(doc);
+                    setLoading(false);
+                }
+            } catch (error) {
+                console.error("Error fetching tutor:", error);
+                if (isMounted) setLoading(false);
+            }
+        };
+
+        fetchTutor();
+
+        return () => { isMounted = false; };
+    }, [tutorId]);
+
+    useEffect(() => {
+        if (tutorId && tutor && user && !viewTracked.current) {
+            // Track profile view only once
+            viewTracked.current = true;
             UserService.incrementProfileViews(tutorId);
             InterestedStudentService.trackInterest(tutorId, user.uid, 'profile_view');
         }
@@ -67,6 +91,10 @@ function TutorProfileContent() {
             return;
         }
 
+        // Capture tutorName ONCE when modal opens - prevents re-renders from polling
+        if (tutor?.tutorProfile) {
+            setBookingTutorName(`${tutor.tutorProfile.firstName} ${tutor.tutorProfile.lastName}`);
+        }
         setShowBookingModal(true);
     };
 
@@ -86,7 +114,7 @@ function TutorProfileContent() {
             const bookingId = await BookingService.createBooking({
                 studentId: user.uid,
                 tutorId: tutorId,
-                date: Timestamp.fromDate(bookingData.date),
+                date: { toDate: () => bookingData.date } as any, // REST-compatible format
                 startTime: bookingData.startTime,
                 endTime: endTime,
                 duration: bookingData.duration,
@@ -180,8 +208,8 @@ function TutorProfileContent() {
                                 <div className="text-center -mt-12">
                                     <div className="w-24 h-24 mx-auto mb-3 rounded-full bg-white p-1 shadow-md">
                                         <div className="w-full h-full rounded-full bg-gradient-to-br from-primary to-accent flex items-center justify-center text-3xl text-white overflow-hidden">
-                                            {profile.profilePicture ? (
-                                                <img src={profile.profilePicture} alt="Profile" className="w-full h-full object-cover" />
+                                            {profile.profilePicture || profile.kyc?.photoUrl ? (
+                                                <img src={profile.profilePicture || profile.kyc?.photoUrl} alt="Profile" className="w-full h-full object-cover" />
                                             ) : (
                                                 <span>{profile.firstName[0]}{profile.lastName[0]}</span>
                                             )}
@@ -328,12 +356,13 @@ function TutorProfileContent() {
                     </div>
                 </div>
 
-                {/* Booking Modal */}
+                {/* Booking Modal - Only depends on stable values to prevent re-mounting */}
                 {
-                    showBookingModal && tutor?.tutorProfile && tutorId && (
+                    showBookingModal && tutorId && (
                         <BookingModal
+                            key="booking-modal"
                             tutorId={tutorId}
-                            tutorName={`${tutor.tutorProfile.firstName} ${tutor.tutorProfile.lastName}`}
+                            tutorName={bookingTutorName}
                             onClose={() => setShowBookingModal(false)}
                             onBook={handleCreateBooking}
                         />

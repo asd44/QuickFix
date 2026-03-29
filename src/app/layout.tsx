@@ -3,6 +3,7 @@ import "./globals.css";
 import { AuthProvider } from '@/contexts/AuthContext';
 import { NotificationPrompt } from '@/components/NotificationPrompt';
 import { ServiceWorkerRegistration } from '@/components/ServiceWorkerRegistration';
+import { AppStateHandler } from '@/components/AppStateHandler';
 
 import { BottomNav } from '@/components/BottomNav';
 import { AuthGuard } from '@/components/AuthGuard';
@@ -57,6 +58,7 @@ export default function RootLayout({
           <BackButtonHandler />
           <AuthGuard>
 
+            <AppStateHandler />
             <NotificationPrompt />
             <main>
               {children}

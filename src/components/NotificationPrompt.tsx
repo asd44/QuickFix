@@ -6,6 +6,8 @@ import { NotificationService } from '@/lib/services/notification.service';
 import { onMessageListener } from '@/lib/firebase/messaging';
 import { Button } from './Button';
 import { Card } from './Card';
+import { Capacitor } from '@capacitor/core';
+import { PushNotifications } from '@capacitor/push-notifications';
 
 export function NotificationPrompt() {
     const { user } = useAuth();
@@ -14,7 +16,24 @@ export function NotificationPrompt() {
     const [loading, setLoading] = useState(false);
 
     useEffect(() => {
-        if ('Notification' in window) {
+        if (Capacitor.isNativePlatform()) {
+            if (user) {
+                // Register listeners immediately
+                NotificationService.registerListeners(user.uid);
+
+                // Check current status
+                PushNotifications.checkPermissions().then(status => {
+                    setPermission(status.receive as NotificationPermission);
+
+                    if (status.receive === 'granted') {
+                        PushNotifications.register();
+                    } else if (status.receive === 'prompt') {
+                        const timer = setTimeout(() => setShowPrompt(true), 3000);
+                        return () => clearTimeout(timer);
+                    }
+                });
+            }
+        } else if ('Notification' in window) {
             setPermission(Notification.permission);
 
             // Show prompt if permission is default and user is logged in

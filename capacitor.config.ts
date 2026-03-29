@@ -14,6 +14,13 @@ const config: CapacitorConfig = {
       launchShowDuration: 300,
       backgroundColor: "#FF5722",
       showSpinner: false
+    },
+    PushNotifications: {
+      presentationOptions: ["badge", "sound", "alert"],
+    },
+    FirebaseAuthentication: {
+      skipNativeAuth: false,
+      providers: ["phone"]
     }
   }
 };

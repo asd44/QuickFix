@@ -1,40 +1,78 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { db } from '@/lib/firebase/config';
-import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { FirestoreREST } from '@/lib/firebase/nativeFirestore';
 import { User } from '@/lib/types/database';
 import Link from 'next/link';
 import { Card, CardContent } from '@/components/Card';
 
+const ITEMS_PER_PAGE = 10;
 
 export default function AllProvidersPage() {
     const [providers, setProviders] = useState<User[]>([]);
     const [loading, setLoading] = useState(true);
+    const [loadingMore, setLoadingMore] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
+    const [hasMore, setHasMore] = useState(true);
+
+    // Observer for infinite scroll
+    const observer = useRef<IntersectionObserver | null>(null);
+    const lastProviderElementRef = useCallback((node: HTMLAnchorElement) => {
+        if (loading || loadingMore) return;
+        if (observer.current) observer.current.disconnect();
+
+        observer.current = new IntersectionObserver(entries => {
+            if (entries[0].isIntersecting && hasMore) {
+                fetchProviders(false);
+            }
+        });
+
+        if (node) observer.current.observe(node);
+    }, [loading, loadingMore, hasMore]);
+
+    const fetchProviders = async (isInitial = false) => {
+        try {
+            if (isInitial) {
+                setLoading(true);
+            } else {
+                setLoadingMore(true);
+            }
+
+            const offset = isInitial ? 0 : providers.length;
+
+            const fetchedProviders = await FirestoreREST.query<User & { id: string }>('users', {
+                where: [{ field: 'role', op: 'EQUAL', value: 'tutor' }],
+                orderBy: [{ field: 'createdAt', direction: 'DESCENDING' }],
+                limit: ITEMS_PER_PAGE,
+                offset: offset
+            });
+
+            if (fetchedProviders.length < ITEMS_PER_PAGE) {
+                setHasMore(false);
+            }
+
+            const newProviders = fetchedProviders.map(p => ({ ...p, uid: p.id }));
+
+            if (isInitial) {
+                setProviders(newProviders);
+            } else {
+                setProviders(prev => {
+                    const existingIds = new Set(prev.map(p => p.uid));
+                    const uniqueNew = newProviders.filter(p => !existingIds.has(p.uid));
+                    return [...prev, ...uniqueNew];
+                });
+            }
+
+        } catch (error) {
+            console.error("Error fetching providers:", error);
+        } finally {
+            setLoading(false);
+            setLoadingMore(false);
+        }
+    };
 
     useEffect(() => {
-        const fetchProviders = async () => {
-            try {
-                const q = query(
-                    collection(db, 'users'),
-                    where('role', '==', 'tutor'),
-                    // orderBy('createdAt', 'desc') // Requires index, might skip strict ordering for now or handle client side
-                );
-                const querySnapshot = await getDocs(q);
-                const providersList: User[] = [];
-                querySnapshot.forEach((doc) => {
-                    providersList.push({ ...doc.data(), uid: doc.id } as User);
-                });
-                setProviders(providersList);
-            } catch (error) {
-                console.error("Error fetching providers:", error);
-            } finally {
-                setLoading(false);
-            }
-        };
-
-        fetchProviders();
+        fetchProviders(true);
     }, []);
 
     const filteredProviders = providers.filter(provider =>
@@ -80,61 +118,73 @@ export default function AllProvidersPage() {
                     {/* Providers Grid */}
                     {loading ? (
                         <div className="text-center py-10">Loading providers...</div>
-                    ) : filteredProviders.length === 0 ? (
-                        <div className="text-center py-10 text-gray-500">No providers found matching your search.</div>
                     ) : (
                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                            {filteredProviders.map((provider) => (
-                                <Link key={provider.uid} href={`/admin/providers/view?id=${provider.uid}`} className="block group">
-                                    <Card className="bg-white border-gray-200 hover:shadow-lg transition-all duration-300 h-full group-hover:-translate-y-1">
-                                        <CardContent className="p-6 space-y-4">
-                                            <div className="flex items-start justify-between">
-                                                <div className="flex items-center gap-3">
-                                                    <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center overflow-hidden">
-                                                        {provider.tutorProfile?.profilePicture ? (
-                                                            <img src={provider.tutorProfile.profilePicture} alt="" className="w-full h-full object-cover" />
-                                                        ) : (
-                                                            <span className="text-xl font-bold text-gray-400 uppercase">
-                                                                {provider.tutorProfile?.firstName?.[0] || provider.email[0]}
-                                                            </span>
-                                                        )}
+                            {filteredProviders.map((provider, index) => {
+                                const isLast = index === filteredProviders.length - 1;
+                                return (
+                                    <Link key={provider.uid} href={`/admin/providers/view?id=${provider.uid}`} className="block group" ref={isLast ? lastProviderElementRef : null}>
+                                        <Card className="bg-white border-gray-200 hover:shadow-lg transition-all duration-300 h-full group-hover:-translate-y-1">
+                                            <CardContent className="p-6 space-y-4">
+                                                <div className="flex items-start justify-between">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center overflow-hidden shrink-0 border border-gray-100 font-bold text-gray-400 text-xl">
+                                                            {provider.tutorProfile?.profilePicture ? (
+                                                                <img
+                                                                    src={provider.tutorProfile.profilePicture}
+                                                                    alt={provider.tutorProfile.firstName || 'Provider'}
+                                                                    className="w-full h-full object-cover"
+                                                                    onError={(e) => {
+                                                                        (e.target as HTMLImageElement).style.display = 'none';
+                                                                        (e.target as HTMLImageElement).parentElement!.innerText = provider.tutorProfile?.firstName?.[0] || provider.email?.[0] || '?';
+                                                                    }}
+                                                                />
+                                                            ) : (
+                                                                <span className="uppercase">
+                                                                    {provider.tutorProfile?.firstName?.[0] || provider.email?.[0] || '?'}
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                        <div>
+                                                            <h3 className="font-bold text-gray-900 group-hover:text-blue-600 transition-colors">
+                                                                {provider.tutorProfile ? `${provider.tutorProfile.firstName} ${provider.tutorProfile.lastName}` : 'Unprofiled User'}
+                                                            </h3>
+                                                            <p className="text-sm text-gray-500 truncate max-w-[150px]">{provider.email}</p>
+                                                        </div>
                                                     </div>
-                                                    <div>
-                                                        <h3 className="font-bold text-gray-900 group-hover:text-blue-600 transition-colors">
-                                                            {provider.tutorProfile ? `${provider.tutorProfile.firstName} ${provider.tutorProfile.lastName}` : 'Unprofiled User'}
-                                                        </h3>
-                                                        <p className="text-sm text-gray-500 truncate max-w-[150px]">{provider.email}</p>
-                                                    </div>
+                                                    {provider.tutorProfile?.verified ? (
+                                                        <span className="bg-green-100 text-green-700 text-xs px-2 py-1 rounded-full font-medium">Verified</span>
+                                                    ) : provider.tutorProfile?.kyc?.status === 'pending' ? (
+                                                        <span className="bg-yellow-100 text-yellow-700 text-xs px-2 py-1 rounded-full font-medium">Pending</span>
+                                                    ) : (
+                                                        <span className="bg-gray-100 text-gray-500 text-xs px-2 py-1 rounded-full font-medium">Unverified</span>
+                                                    )}
                                                 </div>
-                                                {provider.tutorProfile?.verified ? (
-                                                    <span className="bg-green-100 text-green-700 text-xs px-2 py-1 rounded-full font-medium">Verified</span>
-                                                ) : (
-                                                    <span className="bg-yellow-100 text-yellow-700 text-xs px-2 py-1 rounded-full font-medium">Pending</span>
-                                                )}
-                                            </div>
 
-                                            <div className="pt-2 border-t border-gray-100 space-y-2">
-                                                <div className="flex justify-between text-sm">
-                                                    <span className="text-gray-500">Phone</span>
-                                                    <span className="font-medium text-gray-900">{provider.phoneNumber || '-'}</span>
+                                                <div className="pt-2 border-t border-gray-100 space-y-2">
+                                                    <div className="flex justify-between text-sm">
+                                                        <span className="text-gray-500">Phone</span>
+                                                        <span className="font-medium text-gray-900">{provider.phoneNumber || '-'}</span>
+                                                    </div>
+                                                    <div className="flex justify-between text-sm">
+                                                        <span className="text-gray-500">Services</span>
+                                                        <span className="font-medium text-gray-900 truncate max-w-[120px] text-right">
+                                                            {provider.tutorProfile?.subjects?.join(', ') || '-'}
+                                                        </span>
+                                                    </div>
+                                                    <div className="flex justify-between text-sm">
+                                                        <span className="text-gray-500">Location</span>
+                                                        <span className="font-medium text-gray-900">{provider.tutorProfile?.city || '-'}</span>
+                                                    </div>
                                                 </div>
-                                                <div className="flex justify-between text-sm">
-                                                    <span className="text-gray-500">Services</span>
-                                                    <span className="font-medium text-gray-900 truncate max-w-[120px] text-right">
-                                                        {provider.tutorProfile?.subjects?.join(', ') || '-'}
-                                                    </span>
-                                                </div>
-                                                <div className="flex justify-between text-sm">
-                                                    <span className="text-gray-500">Location</span>
-                                                    <span className="font-medium text-gray-900">{provider.tutorProfile?.city || '-'}</span>
-                                                </div>
-                                            </div>
-                                        </CardContent>
-                                    </Card>
-                                </Link>
-                            ))}
+                                            </CardContent>
+                                        </Card>
+                                    </Link>
+                                );
+                            })}
                         </div>
                     )}
+                    {loadingMore && <div className="text-center py-4 text-gray-500">Loading more...</div>}
                 </div>
             </main>
         </div>

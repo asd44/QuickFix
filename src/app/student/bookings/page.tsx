@@ -16,8 +16,17 @@ import { Booking } from '@/lib/types/database';
 import { format, isPast, isFuture, isToday } from 'date-fns';
 import { BackHeader } from '@/components/BackHeader';
 
+// Helper to convert timestamp to Date (handles both Firebase Timestamp and plain object)
+const toDateSafe = (timestamp: any): Date => {
+    if (!timestamp) return new Date();
+    if (timestamp.toDate) return timestamp.toDate();
+    if (timestamp.seconds) return new Date(timestamp.seconds * 1000);
+    if (timestamp instanceof Date) return timestamp;
+    return new Date(timestamp);
+};
+
 export default function StudentBookingsPage() {
-    const { user } = useAuth();
+    const { user, userData } = useAuth();
     const router = useRouter();
     const [bookings, setBookings] = useState<(Booking & { id: string, tutorPhoneNumber?: string })[]>([]);
     const [loading, setLoading] = useState(true);
@@ -30,33 +39,27 @@ export default function StudentBookingsPage() {
 
     useEffect(() => {
         if (user) {
-            loadBookings();
+            setLoading(true);
+            const unsubscribe = BookingService.listenToStudentBookings(user.uid, (bookingsData) => {
+                console.log('Real-time student bookings update:', bookingsData.length);
+                setBookings(bookingsData);
+                setLoading(false);
+            });
+            return () => unsubscribe();
         }
     }, [user]);
 
-    const loadBookings = async () => {
-        if (!user) return;
 
-        setLoading(true);
-        try {
-            console.log('Loading bookings for student:', user.uid);
-            const allBookings = await BookingService.getStudentBookings(user.uid);
-            console.log('Student bookings fetched:', allBookings);
-            console.log('Number of bookings:', allBookings.length);
-            setBookings(allBookings);
-        } catch (error) {
-            console.error('Failed to load bookings:', error);
-        } finally {
-            setLoading(false);
-        }
-    };
 
     const handleCancelBooking = async (bookingId: string) => {
         if (!confirm('Are you sure you want to cancel this booking?')) return;
 
+        const name = userData?.studentProfile ? `${userData.studentProfile.firstName} ${userData.studentProfile.lastName}` : 'student';
+        const reason = `Cancelled by ${name}`;
+
         try {
-            await BookingService.cancelBooking(bookingId, 'Cancelled by student');
-            loadBookings();
+            await BookingService.cancelBooking(bookingId, reason);
+            // loadBookings(); // Auto-updated by listener
         } catch (error) {
             console.error('Failed to cancel booking:', error);
             alert('Failed to cancel booking');
@@ -70,7 +73,7 @@ export default function StudentBookingsPage() {
         try {
             const newCode = await BookingService.regenerateCompletionCode(bookingId);
             alert(`New completion code: ${newCode}`);
-            loadBookings();
+            // loadBookings(); // Auto-updated by listener
         } catch (error) {
             console.error('Failed to regenerate code:', error);
             alert('Failed to regenerate code');
@@ -85,7 +88,7 @@ export default function StudentBookingsPage() {
         try {
             await BookingService.markFinalBillPaidInCash(bookingId);
             alert('Payment marked as completed!');
-            loadBookings();
+            // loadBookings(); // Auto-updated by listener
         } catch (error) {
             console.error('Failed to mark payment as completed:', error);
             alert('Failed to update payment status');
@@ -118,7 +121,7 @@ export default function StudentBookingsPage() {
             });
 
             alert('Thank you for your rating!');
-            loadBookings();
+            // loadBookings(); // Auto-updated by listener
         } catch (error: any) {
             console.error('Failed to submit rating:', error);
             alert(error.message || 'Failed to submit rating');
@@ -154,7 +157,7 @@ export default function StudentBookingsPage() {
     }).sort((a, b) => {
         // Helper to get timestamp from booking
         const getTime = (booking: Booking) => {
-            const date = booking.date.toDate();
+            const date = toDateSafe(booking.date);
             const [hours, minutes] = booking.startTime.split(':').map(Number);
             date.setHours(hours, minutes, 0, 0);
             return date.getTime();
@@ -264,6 +267,11 @@ export default function StudentBookingsPage() {
                                         <div className="flex items-center gap-2 text-sm text-gray-500">
                                             <span>{booking.subject || 'General Service'}</span>
                                         </div>
+                                        {booking.status === 'cancelled' && booking.notes && (
+                                            <p className="text-xs text-red-500 mt-1 font-medium">
+                                                {booking.notes}
+                                            </p>
+                                        )}
                                     </div>
                                     <Badge
                                         variant={
@@ -286,15 +294,15 @@ export default function StudentBookingsPage() {
                                 <div className="flex items-center gap-3 mb-4">
                                     <div className="w-12 h-12 rounded-xl bg-[#f0f9fa] flex flex-col items-center justify-center text-[#005461]">
                                         <span className="text-[10px] uppercase font-bold">
-                                            {format(booking.date.toDate(), 'MMM')}
+                                            {format(toDateSafe(booking.date), 'MMM')}
                                         </span>
                                         <span className="text-xl font-bold leading-none">
-                                            {format(booking.date.toDate(), 'dd')}
+                                            {format(toDateSafe(booking.date), 'dd')}
                                         </span>
                                     </div>
                                     <div>
                                         <p className="font-semibold text-gray-900">
-                                            {format(booking.date.toDate(), 'EEEE')}
+                                            {format(toDateSafe(booking.date), 'EEEE')}
                                         </p>
                                         <p className="text-sm text-gray-500">
                                             {booking.startTime}
@@ -326,7 +334,7 @@ export default function StudentBookingsPage() {
                                             <span className="text-xs font-bold uppercase tracking-wider text-blue-800">Completion Code</span>
                                             {booking.codeExpiresAt && (
                                                 <span className="text-[10px] text-blue-600 bg-white/50 px-2 py-0.5 rounded-full">
-                                                    Expires {format(booking.codeExpiresAt.toDate(), 'h:mm a')}
+                                                    Expires {format(toDateSafe(booking.codeExpiresAt), 'h:mm a')}
                                                 </span>
                                             )}
                                         </div>
@@ -378,14 +386,25 @@ export default function StudentBookingsPage() {
                                         ) : (
                                             <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 p-2 rounded-lg">
                                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                                                Paid via {booking.paymentMethod === 'cash' ? 'Cash' : 'Online'} on {booking.paidAt ? format(booking.paidAt.toDate(), 'MMM dd') : 'Unknown date'}
+                                                Paid via {booking.paymentMethod === 'cash' ? 'Cash' : 'Online'} on {booking.paidAt ? format(toDateSafe(booking.paidAt), 'MMM dd') : 'Unknown date'}
                                             </div>
                                         )}
                                     </div>
                                 )}
 
                                 {/* Footer Actions */}
-                                <div className="flex items-center gap-3 pt-2 border-t border-gray-50">
+                                <div className="flex items-center gap-3 pt-2 border-t border-gray-50 overflow-x-auto">
+                                    <Button
+                                        variant="outline"
+                                        className="flex-1 h-10 rounded-xl text-sm border-gray-200 text-[#005461] hover:bg-[#005461]/5"
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            router.push(`/student/booking-details?id=${booking.id}`);
+                                        }}
+                                    >
+                                        <span className="mr-2">📄</span> Details
+                                    </Button>
+
                                     {(booking.status === 'confirmed' || booking.status === 'in_progress') && (
                                         <>
                                             <Button
@@ -413,7 +432,7 @@ export default function StudentBookingsPage() {
                                         </>
                                     )}
 
-                                    {booking.status === 'completed' && !booking.rated && (
+                                    {booking.status === 'completed' && !booking.rated && (typeof window !== 'undefined' && localStorage.getItem(`rated_${booking.id}`) !== 'true') && (
                                         <Button
                                             variant="outline"
                                             className="flex-1 h-10 rounded-xl text-sm border-yellow-200 text-yellow-700 hover:bg-yellow-50"
@@ -422,7 +441,7 @@ export default function StudentBookingsPage() {
                                                 handleOpenRatingModal(booking);
                                             }}
                                         >
-                                            <span className="mr-2">⭐</span> Rate Service
+                                            <span className="mr-2">⭐</span> Rate
                                         </Button>
                                     )}
 
@@ -435,7 +454,7 @@ export default function StudentBookingsPage() {
                                                 handleCancelBooking(booking.id);
                                             }}
                                         >
-                                            Cancel Request
+                                            Cancel
                                         </Button>
                                     )}
                                 </div>

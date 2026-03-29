@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/Button';
 import { TutorService } from '@/lib/services/tutor.service';
+import { LocationPicker } from '@/components/LocationPicker';
 
 export default function TutorProfileEditPage() {
     const { user, userData } = useAuth();
@@ -20,11 +21,22 @@ export default function TutorProfileEditPage() {
         city: userData?.tutorProfile?.city || '',
         bio: userData?.tutorProfile?.bio || '',
         experience: userData?.tutorProfile?.experience || 0,
+        coordinates: userData?.tutorProfile?.coordinates || null,
     });
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
         const { name, value } = e.target;
         setFormData(prev => ({ ...prev, [name]: value }));
+    };
+
+    const handleLocationSelect = (data: { address: string; city: string; area: string; coordinates: { latitude: number; longitude: number; } }) => {
+        setFormData(prev => ({
+            ...prev,
+            address: data.address,
+            city: data.city,
+            area: data.area,
+            coordinates: data.coordinates
+        }));
     };
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -37,6 +49,7 @@ export default function TutorProfileEditPage() {
             // and our local state might not perfectly match all fields yet, but it's safe here.
             await TutorService.updateTutorProfile(user.uid, {
                 ...formData,
+                coordinates: formData.coordinates || undefined,
                 experience: Number(formData.experience)
             });
             router.push('/tutor/profile/details');
@@ -97,40 +110,51 @@ export default function TutorProfileEditPage() {
                         <p className="text-xs text-muted-foreground mt-1">Mobile number cannot be changed</p>
                     </div>
 
-                    <div>
-                        <label className="block text-sm font-medium mb-2">Address</label>
-                        <input
-                            type="text"
-                            name="address"
-                            value={formData.address}
-                            onChange={handleChange}
-                            placeholder="Enter your full address"
-                            className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-primary focus:outline-none"
-                        />
-                    </div>
+                    <div className="space-y-4">
+                        <div>
+                            <label className="block text-sm font-medium mb-2">Location</label>
+                            <LocationPicker
+                                onLocationSelect={handleLocationSelect}
+                                defaultValue={formData.address}
+                            />
+                            <p className="text-xs text-muted-foreground mt-1">Search your service location or use GPS</p>
+                        </div>
 
-                    <div>
-                        <label className="block text-sm font-medium mb-2">Service Area</label>
-                        <input
-                            type="text"
-                            name="area"
-                            value={formData.area}
-                            onChange={handleChange}
-                            className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-primary focus:outline-none"
-                            required
-                        />
-                    </div>
+                        <div>
+                            <label className="block text-sm font-medium mb-2">Address</label>
+                            <input
+                                type="text"
+                                name="address"
+                                value={formData.address}
+                                onChange={handleChange}
+                                placeholder="Enter your full address"
+                                className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-primary focus:outline-none"
+                            />
+                        </div>
 
-                    <div>
-                        <label className="block text-sm font-medium mb-2">City</label>
-                        <input
-                            type="text"
-                            name="city"
-                            value={formData.city}
-                            onChange={handleChange}
-                            className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-primary focus:outline-none"
-                            required
-                        />
+                        <div>
+                            <label className="block text-sm font-medium mb-2">Service Area</label>
+                            <input
+                                type="text"
+                                name="area"
+                                value={formData.area}
+                                onChange={handleChange}
+                                className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-primary focus:outline-none"
+                                required
+                            />
+                        </div>
+
+                        <div>
+                            <label className="block text-sm font-medium mb-2">City</label>
+                            <input
+                                type="text"
+                                name="city"
+                                value={formData.city}
+                                onChange={handleChange}
+                                className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-primary focus:outline-none"
+                                required
+                            />
+                        </div>
                     </div>
 
                     <div>

@@ -46,16 +46,32 @@ export function BookingModal({ tutorId, tutorName, onClose, onBook }: Omit<Booki
     const [bookedSlots, setBookedSlots] = useState<string[]>([]);
     const VISITING_CHARGE = 99;
 
+    // Log component mount/render
+    console.log('[BookingModal] RENDER - selectedDate:', selectedDate?.toISOString(), 'selectedTime:', selectedTime);
+
+    // Custom setters with logging
+    const handleDateChange = (date: Date | undefined) => {
+        console.log('[BookingModal] handleDateChange called with:', date?.toISOString());
+        setSelectedDate(date);
+    };
+
+    const handleTimeChange = (time: string) => {
+        console.log('[BookingModal] handleTimeChange called with:', time, 'current selectedDate:', selectedDate?.toISOString());
+        setSelectedTime(time);
+    };
+
     // Fetch booked slots when date changes
     useEffect(() => {
+        console.log('[BookingModal] useEffect triggered - selectedDate:', selectedDate?.toISOString(), 'tutorId:', tutorId);
         if (selectedDate && tutorId) {
-            setLoading(true); // Re-use loading or create separate loading state if needed
+            setLoading(true);
             BookingService.getBookedSlots(tutorId, selectedDate)
                 .then(slots => {
+                    console.log('[BookingModal] Got booked slots:', slots);
                     setBookedSlots(slots);
                 })
                 .catch(err => {
-                    console.error("Failed to fetch booked slots", err);
+                    console.error("[BookingModal] Failed to fetch booked slots", err);
                 })
                 .finally(() => {
                     setLoading(false);
@@ -137,7 +153,7 @@ export function BookingModal({ tutorId, tutorName, onClose, onBook }: Omit<Booki
                             <DayPicker
                                 mode="single"
                                 selected={selectedDate}
-                                onSelect={setSelectedDate}
+                                onSelect={handleDateChange}
                                 disabled={disabledDays}
                                 className="border rounded-md p-3"
                             />
@@ -164,7 +180,7 @@ export function BookingModal({ tutorId, tutorName, onClose, onBook }: Omit<Booki
                                     return (
                                         <button
                                             key={time}
-                                            onClick={() => setSelectedTime(time)}
+                                            onClick={() => handleTimeChange(time)}
                                             disabled={isBooked}
                                             className={slotClass}
                                             title={isBooked ? 'Slot already booked' : 'Available slot'}

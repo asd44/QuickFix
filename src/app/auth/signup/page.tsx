@@ -2,38 +2,76 @@
 
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { Button } from '@/components/Button';
-import { CustomSelect } from '@/components/CustomSelect';
 import { UserRole, User } from '@/lib/types/database';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from '@/lib/firebase/config';
+import { FirestoreREST, NativeAuth } from '@/lib/firebase/nativeFirestore';
+import { Capacitor } from '@capacitor/core';
+import { Suspense } from 'react';
+import { LocationPicker } from '@/components/LocationPicker';
 
-export default function SignupPage() {
+function SignupContent() {
     const { user, userData, loading: authLoading, signOut } = useAuth();
     const router = useRouter();
+    const searchParams = useSearchParams();
 
-    const [role, setRole] = useState<UserRole>('student');
-    const [firstName, setFirstName] = useState('');
-    const [lastName, setLastName] = useState('');
-    const [gender, setGender] = useState('');
-    const [city, setCity] = useState('');
-    const [coordinates, setCoordinates] = useState<{ latitude: number; longitude: number } | null>(null);
+    // Read role from URL - use useSearchParams for proper Next.js handling
+    const urlRole = searchParams.get('role');
+    const [role, setRole] = useState<UserRole>(() => {
+        // Initialize from URL param if available
+        if (urlRole === 'tutor' || urlRole === 'student') {
+            return urlRole;
+        }
+        return 'student';
+    });
+
+    const [formData, setFormData] = useState({
+        firstName: '',
+        lastName: '',
+        address: '',
+        city: '',
+        area: '',
+        coordinates: null as { latitude: number; longitude: number; } | null,
+    });
+
     const [error, setError] = useState('');
     const [loading, setLoading] = useState(false);
-    const [detectingLocation, setDetectingLocation] = useState(false);
+
+    // Native Capacitor Firebase user (for when web SDK auth isn't synced)
+    const [nativeUser, setNativeUser] = useState<{ uid: string; phoneNumber: string | null } | null>(null);
+    const [checkingNativeAuth, setCheckingNativeAuth] = useState(Capacitor.isNativePlatform());
 
     const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
 
+    // Update role if URL param changes
     useEffect(() => {
-        const params = new URLSearchParams(window.location.search);
-        const initialRole = params.get('role');
-        if (initialRole === 'tutor' || initialRole === 'student') {
-            setRole(initialRole);
-        } else {
-            // Fallback if no role is picked
-            setRole('student');
+        if (urlRole === 'tutor' || urlRole === 'student') {
+            console.log('[SignupPage] Setting role from URL:', urlRole);
+            setRole(urlRole);
         }
+    }, [urlRole]);
+
+    // Check for native Capacitor Firebase user (web SDK auth may not be synced)
+    useEffect(() => {
+        const checkNativeAuth = async () => {
+            if (Capacitor.isNativePlatform()) {
+                try {
+                    const { FirebaseAuthentication } = await import('@capacitor-firebase/authentication');
+                    const result = await FirebaseAuthentication.getCurrentUser();
+                    console.log('[SignupPage] Native user check:', result);
+                    if (result.user) {
+                        setNativeUser({
+                            uid: result.user.uid,
+                            phoneNumber: result.user.phoneNumber || null
+                        });
+                    }
+                } catch (error) {
+                    console.error('[SignupPage] Native auth check error:', error);
+                }
+            }
+            setCheckingNativeAuth(false);
+        };
+        checkNativeAuth();
     }, []);
 
     const SERVICE_CATEGORIES = [
@@ -61,44 +99,27 @@ export default function SignupPage() {
         }
     };
 
-    // Auto-detect location on mount
+    // Auto-detect location on mount - DISABLED per user request to prevent refresh loops
+    // Users must manually click "Detect Location" if they want to use this feature.
+    /*
     useEffect(() => {
-        detectLocation();
+        // Code removed to prevent auto-detection loops
     }, []);
+    */
 
-    const detectLocation = () => {
-        if (!navigator.geolocation) {
-            setError('Geolocation is not supported by your browser');
-            return;
-        }
+    const handleLocationSelect = (data: { address: string; city: string; area: string; coordinates: { latitude: number; longitude: number; } }) => {
+        setFormData(prev => ({
+            ...prev,
+            address: data.address, // We might not have a dedicated address field in the UI shown before, but good to store
+            city: data.city,
+            area: data.area,
+            coordinates: data.coordinates
+        }));
+    };
 
-        setDetectingLocation(true);
-        setError('');
-
-        navigator.geolocation.getCurrentPosition(async (position) => {
-            const { latitude, longitude } = position.coords;
-            setCoordinates({ latitude, longitude });
-
-            try {
-                // Reverse geocoding using OpenStreetMap Nominatim
-                const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`);
-                const data = await response.json();
-
-                if (data.address) {
-                    const detectedCity = data.address.city || data.address.town || data.address.village || data.address.state_district || '';
-                    if (detectedCity) {
-                        setCity(detectedCity);
-                    }
-                }
-            } catch (err) {
-                console.warn('Failed to detect city name:', err);
-            } finally {
-                setDetectingLocation(false);
-            }
-        }, (err) => {
-            console.error('Geolocation error:', err);
-            setDetectingLocation(false);
-        });
+    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const { name, value } = e.target;
+        setFormData(prev => ({ ...prev, [name]: value }));
     };
 
     const handleProfileCreation = async (e: React.FormEvent) => {
@@ -106,7 +127,10 @@ export default function SignupPage() {
         setError('');
         setLoading(true);
 
-        if (!user) {
+        // Use web user or native user
+        const currentUser = user || nativeUser;
+
+        if (!currentUser) {
             setError('No authenticated user found');
             setLoading(false);
             return;
@@ -118,42 +142,71 @@ export default function SignupPage() {
             return;
         }
 
+        // If using native user but no web SDK auth, try to sync web SDK
+        if (!user && nativeUser && Capacitor.isNativePlatform()) {
+            console.log('[SignupPage] No web SDK auth, attempting sync from native...');
+            try {
+                const { FirebaseAuthentication } = await import('@capacitor-firebase/authentication');
+                const { signInWithCredential, PhoneAuthProvider } = await import('firebase/auth');
+                const { auth } = await import('@/lib/firebase/config');
+
+                // Get ID token and use it to verify auth
+                const idTokenResult = await FirebaseAuthentication.getIdToken();
+                console.log('[SignupPage] Got ID token:', !!idTokenResult.token);
+
+                // Wait for web SDK to pick up the auth state
+                if (!auth.currentUser) {
+                    console.log('[SignupPage] Waiting for web SDK auth to sync...');
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+
+                if (auth.currentUser) {
+                    console.log('[SignupPage] Web SDK auth synced successfully');
+                }
+            } catch (syncError) {
+                console.log('[SignupPage] Web SDK sync attempt failed:', syncError);
+            }
+        }
+
         try {
             const userDoc: User = {
-                uid: user.uid,
+                uid: currentUser.uid,
                 email: '', // Phone auth users don't have email
-                phoneNumber: user.phoneNumber || '',
+                phoneNumber: currentUser.phoneNumber || '',
                 role,
-                createdAt: serverTimestamp() as any,
+                createdAt: FirestoreREST.serverTimestamp() as any,
                 ...(role === 'student' && {
                     studentProfile: {
-                        firstName,
-                        lastName,
-                        gender,
-                        city,
+                        firstName: formData.firstName,
+                        lastName: formData.lastName,
+                        gender: '',
+                        city: formData.city,
+                        area: formData.area || '', // Added area
+                        address: formData.address || '', // Added address
                         favorites: [],
-                        coordinates: coordinates || undefined,
+                        coordinates: formData.coordinates || undefined,
                     },
                 }),
                 ...(role === 'tutor' && {
                     tutorProfile: {
-                        firstName,
-                        lastName,
+                        firstName: formData.firstName,
+                        lastName: formData.lastName,
                         bio: '',
-                        subjects: selectedCategories, // Use selected categories
+                        subjects: selectedCategories,
                         grades: [],
                         hourlyRate: 0,
                         experience: 0,
                         teachingType: [],
-                        gender: '', // Removed from form
-                        city,
-                        area: '', // Removed from form
+                        gender: '',
+                        city: formData.city,
+                        area: formData.area || '', // Added area
+                        address: formData.address || '', // Added address
                         verified: false,
                         verificationDocuments: [],
                         averageRating: 0,
                         totalRatings: 0,
                         profileViews: 0,
-                        coordinates: coordinates || undefined,
+                        coordinates: formData.coordinates || undefined,
                         subscription: {
                             plan: null,
                             status: 'pending',
@@ -164,17 +217,56 @@ export default function SignupPage() {
                 }),
             };
 
-            await setDoc(doc(db, 'users', user.uid), userDoc);
+            // Use FirestoreREST for profile creation (native-only)
+            console.log('[SignupPage] Creating profile via REST API...');
+            const success = await FirestoreREST.setDoc('users', currentUser.uid, userDoc);
+
+            if (!success) {
+                throw new Error('Failed to create profile. Please try again.');
+            }
+
+            console.log('[SignupPage] Profile created successfully!');
 
             // Redirect to dashboard
-            router.push('/');
+            window.location.href = '/';
         } catch (err: any) {
             setError(err.message || 'Failed to create profile');
             setLoading(false);
         }
     };
 
-    if (authLoading || !user) {
+    // Check if authenticated user already has a complete profile
+    useEffect(() => {
+        console.log('[SignupPage] useEffect:', { authLoading, hasUser: !!user, hasUserData: !!userData, hasNativeUser: !!nativeUser });
+        // STRICTION CHECK: Only redirect if user has a ROLE. 
+        // Simply having userData (which might be empty or incomplete) is not enough.
+        if (!authLoading && user && userData?.role) {
+            // User is authenticated AND has complete profile (role exists) - redirect to home
+            console.log('[SignupPage] Has complete profile (role exists), redirecting to home');
+            router.push('/');
+        }
+    }, [authLoading, user, userData, router, nativeUser]);
+
+    // Use AuthContext as source of truth
+    const effectiveUser = user;
+    const isLoading = authLoading;
+
+    console.log('[SignupPage] Render:', { authLoading, hasUser: !!user });
+
+    // Show loading while checking auth state
+    if (isLoading) {
+        console.log('[SignupPage] Showing loading spinner');
+        return (
+            <div className="min-h-screen flex items-center justify-center">
+                <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+            </div>
+        );
+    }
+
+    // If no user at all, redirect to login
+    if (!effectiveUser) {
+        console.log('[SignupPage] No user found, redirecting to login');
+        router.push('/auth/login');
         return (
             <div className="min-h-screen flex items-center justify-center">
                 <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
@@ -218,8 +310,9 @@ export default function SignupPage() {
                                 <label className="text-sm font-semibold text-gray-700 ml-1">First Name</label>
                                 <input
                                     type="text"
-                                    value={firstName}
-                                    onChange={(e) => setFirstName(e.target.value)}
+                                    name="firstName"
+                                    value={formData.firstName}
+                                    onChange={handleChange}
                                     className="w-full p-4 rounded-xl border border-gray-200 bg-gray-50/50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-lg"
                                     placeholder="John"
                                     required
@@ -229,28 +322,16 @@ export default function SignupPage() {
                                 <label className="text-sm font-semibold text-gray-700 ml-1">Last Name</label>
                                 <input
                                     type="text"
-                                    value={lastName}
-                                    onChange={(e) => setLastName(e.target.value)}
+                                    name="lastName"
+                                    value={formData.lastName}
+                                    onChange={handleChange}
                                     className="w-full p-4 rounded-xl border border-gray-200 bg-gray-50/50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-lg"
                                     placeholder="Doe"
                                     required
                                 />
                             </div>
                         </div>
-                        {role === 'student' && (
-                            <CustomSelect
-                                label="Gender"
-                                value={gender}
-                                onChange={(val) => setGender(val)}
-                                options={[
-                                    { value: 'Male', label: 'Male' },
-                                    { value: 'Female', label: 'Female' },
-                                    { value: 'Others', label: 'Others' }
-                                ]}
-                                placeholder="Select Gender"
-                                className="p-4 rounded-xl border border-gray-200 bg-gray-50/50 focus:bg-white focus:ring-2 focus:ring-primary/20 focus:border-primary text-lg"
-                            />
-                        )}
+
                     </div>
 
                     {/* Role Specific Fields */}
@@ -293,43 +374,37 @@ export default function SignupPage() {
                     <div className="space-y-6">
                         <h2 className="text-lg font-bold text-gray-900 border-b pb-2">Location</h2>
                         <div className="space-y-2">
-                            <label className="text-sm font-semibold text-gray-700 ml-1">Your City</label>
-                            <div className="flex gap-3">
-                                <div className="relative flex-1">
-                                    <div className="absolute inset-y-0 left-0 pl-4 flex items-center pointer-events-none">
-                                        <svg className="h-6 w-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
-                                    </div>
-                                    <input
-                                        type="text"
-                                        value={city}
-                                        onChange={(e) => setCity(e.target.value)}
-                                        className="w-full pl-12 h-14 rounded-xl border border-gray-200 bg-gray-50/50 focus:bg-white focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all text-lg"
-                                        placeholder="e.g., Mumbai"
-                                        required
-                                    />
-                                </div>
-                                <Button
-                                    type="button"
-                                    variant="outline"
-                                    onClick={detectLocation}
-                                    disabled={detectingLocation}
-                                    className="whitespace-nowrap px-6 border-gray-200 hover:bg-gray-50 hover:text-primary rounded-xl h-14"
-                                >
-                                    {detectingLocation ? (
-                                        <span className="flex items-center gap-2">
-                                            <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                                        </span>
-                                    ) : (
-                                        <span className="text-sm font-medium">Detect Location</span>
-                                    )}
-                                </Button>
+                            <label className="text-sm font-semibold text-gray-700 ml-1">Your Location</label>
+                            <LocationPicker
+                                onLocationSelect={handleLocationSelect}
+                                defaultValue=""
+                                className="w-full"
+                            />
+                            <p className="text-xs text-gray-500 ml-1">Search your city or use GPS</p>
+                        </div>
+
+                        {/* Hidden fields for visual confirmation if needed, OR we can show them read-only */}
+                        <div className="grid grid-cols-2 gap-4">
+                            <div>
+                                <label className="text-sm font-semibold text-gray-700 ml-1">City</label>
+                                <input
+                                    type="text"
+                                    value={formData.city}
+                                    readOnly
+                                    className="w-full p-3 rounded-xl border border-gray-100 bg-gray-50 text-gray-600 cursor-not-allowed"
+                                    placeholder="Auto-filled"
+                                />
                             </div>
-                            {coordinates && (
-                                <p className="text-sm text-emerald-600 flex items-center gap-2 font-medium animate-fade-in bg-emerald-50 p-2 rounded-lg">
-                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
-                                    GPS Coordinates captured
-                                </p>
-                            )}
+                            <div>
+                                <label className="text-sm font-semibold text-gray-700 ml-1">Area</label>
+                                <input
+                                    type="text"
+                                    value={formData.area}
+                                    readOnly
+                                    className="w-full p-3 rounded-xl border border-gray-100 bg-gray-50 text-gray-600 cursor-not-allowed"
+                                    placeholder="Auto-filled"
+                                />
+                            </div>
                         </div>
                     </div>
 
@@ -350,8 +425,7 @@ export default function SignupPage() {
                         <button
                             type="button"
                             onClick={() => {
-                                signOut();
-                                router.push('/welcome');
+                                router.push('/auth/role-selection');
                             }}
                             className="text-sm font-medium text-gray-500 hover:text-gray-900 transition-colors"
                         >
@@ -361,5 +435,17 @@ export default function SignupPage() {
                 </form>
             </div>
         </div>
+    );
+}
+
+export default function SignupPage() {
+    return (
+        <Suspense fallback={
+            <div className="min-h-screen flex items-center justify-center">
+                <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
+            </div>
+        }>
+            <SignupContent />
+        </Suspense>
     );
 }

@@ -2,11 +2,11 @@
 
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
-import { db } from '@/lib/firebase/config';
-import { collection, query, where, getDocs, orderBy } from 'firebase/firestore';
+import { FirestoreREST } from '@/lib/firebase/nativeFirestore';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/Card';
 import { Badge } from '@/components/Badge';
 import Link from 'next/link';
+import { User, Booking, Complaint as ComplaintType } from '@/lib/types/database';
 
 interface VerificationRequest {
     id: string;
@@ -40,81 +40,80 @@ export default function AdminDashboard() {
     useEffect(() => {
         const fetchData = async () => {
             try {
-                // 1. Fetch Pending Verifications (Existing logic)
-                const usersRef = collection(db, 'users');
-                const qVerification = query(usersRef, where('tutorProfile.kyc.status', '==', 'pending'));
-
-                // 2. Fetch All Providers
-                const qProviders = query(usersRef, where('role', '==', 'tutor'));
-
-                // 3. Fetch All Customers
-                const qCustomers = query(usersRef, where('role', '==', 'student'));
-
-                // 4. Fetch Completed Bookings for Earnings
-                const bookingsRef = collection(db, 'bookings');
-                const qBookings = query(bookingsRef, where('status', '==', 'completed'));
-
-                // 5. Fetch Pending Complaints (Mock logic or actual if collection exists)
-                // Assuming 'complaints' collection exists based on types
-                const complaintsRef = collection(db, 'complaints');
-                const qComplaints = query(complaintsRef, where('status', '==', 'pending'));
-
-                // Execute all queries in parallel
+                // Fetch all data in parallel using FirestoreREST
                 const [
-                    verificationSnap,
-                    providersSnap,
-                    customersSnap,
-                    bookingsSnap,
-                    complaintsSnap
+                    allTutors,
+                    providers,
+                    customers,
+                    completedBookings,
+                    pendingComplaintsData
                 ] = await Promise.all([
-                    getDocs(qVerification),
-                    getDocs(qProviders),
-                    getDocs(qCustomers),
-                    getDocs(qBookings),
-                    getDocs(qComplaints)
+                    // Get all tutors and filter for pending verification client-side
+                    FirestoreREST.query<User & { id: string }>('users', {
+                        where: [{ field: 'role', op: 'EQUAL', value: 'tutor' }]
+                    }),
+                    FirestoreREST.query<User & { id: string }>('users', {
+                        where: [{ field: 'role', op: 'EQUAL', value: 'tutor' }]
+                    }),
+                    FirestoreREST.query<User & { id: string }>('users', {
+                        where: [{ field: 'role', op: 'EQUAL', value: 'student' }]
+                    }),
+                    FirestoreREST.query<Booking & { id: string }>('bookings', {
+                        where: [{ field: 'status', op: 'EQUAL', value: 'completed' }]
+                    }),
+                    FirestoreREST.query<ComplaintType & { id: string }>('complaints', {
+                        where: [{ field: 'status', op: 'EQUAL', value: 'pending' }]
+                    })
                 ]);
 
-                // Process Verifications List
-                const pendingVerifications: VerificationRequest[] = [];
-                verificationSnap.forEach((doc) => {
-                    const data = doc.data();
-                    pendingVerifications.push({
-                        id: doc.id,
-                        name: (data.tutorProfile?.firstName + ' ' + data.tutorProfile?.lastName) || 'Unknown User',
-                        email: data.email || data.phoneNumber || 'No Email',
-                        submittedAt: data.tutorProfile?.kyc?.submittedAt || new Date().toISOString(),
-                        status: 'pending'
-                    });
+                // Filter tutors who need verification (not verified yet)
+                const pendingKycUsers = allTutors.filter(user => {
+                    const isVerified = user.tutorProfile?.verified;
+                    const kycStatus = user.tutorProfile?.kyc?.status;
+
+                    // Show in verification queue ONLY if:
+                    // 1. Not verified
+                    // 2. AND status IS 'pending' (meaning they explicitly submitted)
+                    // Users with undefined kycStatus haven't submitted anything yet.
+                    return !isVerified && kycStatus === 'pending';
                 });
+
+                console.log('[AdminDashboard] All tutors:', allTutors.length);
+                console.log('[AdminDashboard] Unverified tutors:', pendingKycUsers.length);
+                allTutors.forEach(u => console.log('[AdminDashboard] Tutor:', u.id, 'verified:', u.tutorProfile?.verified, 'docs:', u.tutorProfile?.verificationDocuments?.length));
+
+                // Process Verifications List
+                const pendingVerifications: VerificationRequest[] = pendingKycUsers.map(user => ({
+                    id: user.id,
+                    name: (user.tutorProfile?.firstName + ' ' + user.tutorProfile?.lastName) || 'Unknown User',
+                    email: user.email || user.phoneNumber || 'No Email',
+                    submittedAt: user.tutorProfile?.kyc?.submittedAt || new Date().toISOString(),
+                    status: 'pending'
+                }));
                 setVerifications(pendingVerifications);
 
                 // Process Earnings
-                let earnings = 0;
-                bookingsSnap.forEach(doc => {
-                    const data = doc.data();
-                    earnings += (data.finalBillAmount || data.totalPrice || 0);
-                });
+                const earnings = completedBookings.reduce((sum, booking) =>
+                    sum + ((booking as any).finalBillAmount || booking.totalPrice || 0), 0);
 
                 // Process Complaints
-                const pendingComplaints: Complaint[] = [];
-                complaintsSnap.forEach(doc => {
-                    const data = doc.data();
-                    pendingComplaints.push({
-                        id: doc.id,
-                        subject: data.issue || 'No Subject',
-                        status: data.status,
-                        createdAt: data.createdAt?.toDate ? data.createdAt.toDate().toISOString() : new Date().toISOString()
-                    });
-                });
+                const pendingComplaints: Complaint[] = pendingComplaintsData.map(c => ({
+                    id: c.id,
+                    subject: c.issue || 'No Subject',
+                    status: c.status,
+                    createdAt: (c.createdAt as any)?.seconds
+                        ? new Date((c.createdAt as any).seconds * 1000).toISOString()
+                        : new Date().toISOString()
+                }));
                 setComplaints(pendingComplaints);
 
                 // Update Stats
                 setStats({
-                    pendingVerifications: verificationSnap.size,
-                    totalProviders: providersSnap.size,
-                    totalCustomers: customersSnap.size,
+                    pendingVerifications: pendingKycUsers.length,
+                    totalProviders: providers.length,
+                    totalCustomers: customers.length,
                     totalEarnings: earnings,
-                    pendingComplaints: complaintsSnap.size
+                    pendingComplaints: pendingComplaintsData.length
                 });
 
             } catch (error) {
@@ -161,18 +160,20 @@ export default function AdminDashboard() {
                     </div>
 
                     {/* All Customers Block */}
-                    <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all duration-300 hover:-translate-y-1">
-                        <div className="mb-4 text-gray-900">
-                            <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
-                            </svg>
+                    <Link href="/admin/students" className="block">
+                        <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all duration-300 hover:-translate-y-1 h-full">
+                            <div className="mb-4 text-gray-900">
+                                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
+                                </svg>
+                            </div>
+                            <h3 className="text-sm font-semibold text-gray-900">All Customers</h3>
+                            <div className="flex items-end gap-2 mt-2">
+                                <p className="text-3xl font-bold text-gray-900">{stats.totalCustomers}</p>
+                                <p className="text-sm text-gray-500 mb-1">Active</p>
+                            </div>
                         </div>
-                        <h3 className="text-sm font-semibold text-gray-900">All Customers</h3>
-                        <div className="flex items-end gap-2 mt-2">
-                            <p className="text-3xl font-bold text-gray-900">{stats.totalCustomers}</p>
-                            <p className="text-sm text-gray-500 mb-1">Active</p>
-                        </div>
-                    </div>
+                    </Link>
 
                     {/* All Providers Block */}
                     <Link href="/admin/providers" className="block">
@@ -191,17 +192,34 @@ export default function AdminDashboard() {
                     </Link>
 
                     {/* Total Earnings Block */}
-                    <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all duration-300 hover:-translate-y-1 col-span-2 md:col-span-1">
-                        <div className="mb-4 text-gray-900">
-                            <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
-                                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
+                    <Link href="/admin/earnings" className="block">
+                        <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all duration-300 hover:-translate-y-1 h-full">
+                            <div className="mb-4 text-gray-900">
+                                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v12m-3-2.818l.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                            </div>
+                            <h3 className="text-sm font-semibold text-gray-900">Total Earnings</h3>
+                            <div className="flex items-end gap-2 mt-2">
+                                <p className="text-3xl font-bold text-gray-900">₹{stats.totalEarnings.toLocaleString()}</p>
+                            </div>
                         </div>
-                        <h3 className="text-sm font-semibold text-gray-900">Total Earnings</h3>
-                        <div className="flex items-end gap-2 mt-2">
-                            <p className="text-3xl font-bold text-gray-900">₹{stats.totalEarnings.toLocaleString()}</p>
+                    </Link>
+
+                    {/* Manage Subscriptions Block */}
+                    <Link href="/admin/subscriptions" className="block">
+                        <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-[0_8px_30px_rgb(0,0,0,0.04)] hover:shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all duration-300 hover:-translate-y-1 h-full">
+                            <div className="mb-4 text-gray-900">
+                                <svg className="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={1.5}>
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+                                </svg>
+                            </div>
+                            <h3 className="text-sm font-semibold text-gray-900">Subscriptions</h3>
+                            <div className="flex items-end gap-2 mt-2">
+                                <p className="text-sm text-gray-500 mb-1 font-medium">Manage Plans</p>
+                            </div>
                         </div>
-                    </div>
+                    </Link>
                 </div>
 
                 {/* Verification Queue header removed as requested in previous step, so just sections below */}

@@ -9,22 +9,26 @@ import { BackHeader } from '@/components/BackHeader';
 import { UserService } from '@/lib/services/user.service';
 import { storage } from '@/lib/firebase/config';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { LocationPicker } from '@/components/LocationPicker';
 
 export default function StudentProfileEditPage() {
-    const { user, userData } = useAuth();
+    const { user, userData, refreshUserData } = useAuth(); // Added refreshUserData
     const router = useRouter();
     const [loading, setLoading] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const [imageFile, setImageFile] = useState<File | null>(null);
     const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+    const [uploadStatus, setUploadStatus] = useState('');
 
     const [formData, setFormData] = useState({
         firstName: '',
         lastName: '',
         address: '',
         city: '',
+        area: '',
         gender: '',
+        coordinates: null as { latitude: number; longitude: number; } | null,
     });
 
     useEffect(() => {
@@ -34,13 +38,25 @@ export default function StudentProfileEditPage() {
                 lastName: userData.studentProfile.lastName || '',
                 address: userData.studentProfile.address || '',
                 city: userData.studentProfile.city || '',
+                area: userData.studentProfile.area || '',
                 gender: userData.studentProfile.gender || '',
+                coordinates: userData.studentProfile.coordinates || null,
             });
             if (userData.studentProfile.profilePicture) {
                 setPreviewUrl(userData.studentProfile.profilePicture);
             }
         }
     }, [userData]);
+
+    const handleLocationSelect = (data: { address: string; city: string; area: string; coordinates: { latitude: number; longitude: number; } }) => {
+        setFormData(prev => ({
+            ...prev,
+            address: data.address,
+            city: data.city,
+            area: data.area,
+            coordinates: data.coordinates
+        }));
+    };
 
     const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const { name, value } = e.target;
@@ -56,36 +72,128 @@ export default function StudentProfileEditPage() {
         }
     };
 
+    // Image compression utility
+    const compressImage = (file: File): Promise<File> => {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = (event) => {
+                const img = new Image();
+                img.src = event.target?.result as string;
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    const MAX_WIDTH = 800;
+                    const MAX_HEIGHT = 800;
+                    let width = img.width;
+                    let height = img.height;
+
+                    if (width > height) {
+                        if (width > MAX_WIDTH) {
+                            height *= MAX_WIDTH / width;
+                            width = MAX_WIDTH;
+                        }
+                    } else {
+                        if (height > MAX_HEIGHT) {
+                            width *= MAX_HEIGHT / height;
+                            height = MAX_HEIGHT;
+                        }
+                    }
+
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx?.drawImage(img, 0, 0, width, height);
+
+                    canvas.toBlob((blob) => {
+                        if (!blob) {
+                            reject(new Error('Canvas is empty'));
+                            return;
+                        }
+                        const compressedFile = new File([blob], file.name, {
+                            type: 'image/jpeg',
+                            lastModified: Date.now(),
+                        });
+                        resolve(compressedFile);
+                    }, 'image/jpeg', 0.7); // 0.7 quality
+                };
+                img.onerror = (error) => reject(error);
+            };
+            reader.onerror = (error) => reject(error);
+        });
+    };
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!user) return;
 
         setLoading(true);
-        try {
-            let profilePictureUrl = userData?.studentProfile?.profilePicture;
+        setUploadStatus('Starting update...');
 
-            if (imageFile) {
+        let profilePictureUrl = userData?.studentProfile?.profilePicture;
+        let imageUploadError = null;
+
+        // 1. Try Image Upload (Independent Step)
+        if (imageFile) {
+            try {
+                setUploadStatus('Compressing image...');
+                console.log('Starting compression...');
+                const compressedFile = await compressImage(imageFile);
+                console.log(`Compressed: ${imageFile.size} -> ${compressedFile.size}`);
+
+                setUploadStatus('Uploading image...');
                 console.log('Starting image upload...');
-                // Using 'profile-pictures' path as it's likely already allowed in deployed rules
-                const storageRef = ref(storage, `profile-pictures/${user.uid}/${Date.now()}_${imageFile.name}`);
-                const snapshot = await uploadBytes(storageRef, imageFile);
-                console.log('Image uploaded, getting URL...');
-                profilePictureUrl = await getDownloadURL(snapshot.ref);
-                console.log('Got URL:', profilePictureUrl);
-            }
 
+                const timeoutPromise = new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Upload timed out (60s). Connection too slow.')), 60000)
+                );
+
+                const uploadPromise = async () => {
+                    const { StorageService } = await import('@/lib/services/storage.service');
+                    return await StorageService.uploadProfilePicture(user.uid, compressedFile);
+                };
+
+                profilePictureUrl = await Promise.race([uploadPromise(), timeoutPromise]) as string;
+                console.log('Got URL:', profilePictureUrl);
+
+            } catch (error: any) {
+                console.error('Image upload failed:', error);
+                imageUploadError = error.message;
+                // Don't stop here! Continue to save text data.
+            }
+        }
+
+        // 2. Save Profile Data (Always Run)
+        try {
+            setUploadStatus('Saving details...');
             const updatedData = {
                 ...formData,
-                profilePicture: profilePictureUrl,
+                coordinates: formData.coordinates || undefined, // Fix strict type issue
+                profilePicture: profilePictureUrl, // Will be new URL if success, or old URL if failed/skipped
             };
 
             console.log('Updating user profile in Firestore...');
+            console.log('Data to save:', updatedData);
+
             await UserService.updateStudentProfile(user.uid, updatedData);
+
+            // CRITICAL FIX: Refresh local state immediately
+            setUploadStatus('Refreshing app data...');
+            if (refreshUserData) {
+                await refreshUserData();
+            }
+
+            setUploadStatus('Done!');
             console.log('Profile updated successfully');
+
+            if (imageUploadError) {
+                alert(`Profile updated, BUT image upload failed: ${imageUploadError} (Check permissions?)`);
+            }
+
             router.push('/student/profile/details');
         } catch (error: any) {
             console.error('Error updating profile:', error);
             alert(`Failed to update profile: ${error.message || error.code || 'Unknown error'}`);
+            setUploadStatus('Error occurred.');
         } finally {
             setLoading(false);
         }
@@ -161,35 +269,58 @@ export default function StudentProfileEditPage() {
                         <label className="text-sm font-semibold text-gray-700">Mobile Number</label>
                         <input
                             type="text"
-                            value={userData.phoneNumber}
+                            value={userData.phoneNumber || ''}
                             disabled
                             className="w-full px-4 py-3 rounded-xl border border-gray-200 bg-gray-100 text-gray-500 cursor-not-allowed"
                         />
                         <p className="text-xs text-gray-500">Mobile number cannot be changed</p>
                     </div>
 
-                    <div className="space-y-2">
-                        <label className="text-sm font-semibold text-gray-700">Address</label>
-                        <input
-                            type="text"
-                            name="address"
-                            value={formData.address}
-                            onChange={handleChange}
-                            placeholder="Enter your full address"
-                            className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#005461] focus:ring-2 focus:ring-[#005461]/20 outline-none transition-all bg-gray-50 focus:bg-white"
-                        />
-                    </div>
+                    <div className="space-y-4">
+                        <div className="space-y-2">
+                            <label className="text-sm font-semibold text-gray-700">Location</label>
+                            <LocationPicker
+                                onLocationSelect={handleLocationSelect}
+                                defaultValue={formData.address}
+                            />
+                            <p className="text-xs text-gray-500">Search your location or use GPS</p>
+                        </div>
 
-                    <div className="space-y-2">
-                        <label className="text-sm font-semibold text-gray-700">City</label>
-                        <input
-                            type="text"
-                            name="city"
-                            value={formData.city}
-                            onChange={handleChange}
-                            className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#005461] focus:ring-2 focus:ring-[#005461]/20 outline-none transition-all bg-gray-50 focus:bg-white"
-                            required
-                        />
+                        <div className="space-y-2">
+                            <label className="text-sm font-semibold text-gray-700">Current Address</label>
+                            <input
+                                type="text"
+                                name="address"
+                                value={formData.address}
+                                onChange={handleChange}
+                                placeholder="House/Flat No, Building Name"
+                                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#005461] focus:ring-2 focus:ring-[#005461]/20 outline-none transition-all bg-gray-50 focus:bg-white"
+                            />
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-2">
+                                <label className="text-sm font-semibold text-gray-700">Area/Locality</label>
+                                <input
+                                    type="text"
+                                    name="area"
+                                    value={formData.area}
+                                    onChange={handleChange}
+                                    className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#005461] focus:ring-2 focus:ring-[#005461]/20 outline-none transition-all bg-gray-50 focus:bg-white"
+                                />
+                            </div>
+                            <div className="space-y-2">
+                                <label className="text-sm font-semibold text-gray-700">City</label>
+                                <input
+                                    type="text"
+                                    name="city"
+                                    value={formData.city}
+                                    onChange={handleChange}
+                                    className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-[#005461] focus:ring-2 focus:ring-[#005461]/20 outline-none transition-all bg-gray-50 focus:bg-white"
+                                    required
+                                />
+                            </div>
+                        </div>
                     </div>
 
                     <CustomSelect
@@ -213,6 +344,9 @@ export default function StudentProfileEditPage() {
                         >
                             Save Changes
                         </Button>
+                        {uploadStatus && (
+                            <p className="text-center text-sm text-gray-500 mt-2 animate-pulse">{uploadStatus}</p>
+                        )}
                     </div>
                 </form>
             </div>

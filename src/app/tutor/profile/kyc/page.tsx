@@ -8,9 +8,9 @@ import Link from 'next/link';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/Card';
-import { storage, db } from '@/lib/firebase/config';
+import { storage } from '@/lib/firebase/config';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { doc, updateDoc } from 'firebase/firestore';
+import { FirestoreREST } from '@/lib/firebase/nativeFirestore';
 
 export default function KYCPage() {
     const { user, userData } = useAuth();
@@ -109,8 +109,8 @@ export default function KYCPage() {
             await uploadBytes(idProofRef, idProof);
             const idProofUrl = await getDownloadURL(idProofRef);
 
-            // Update User Profile with KYC data
-            await updateDoc(doc(db, 'users', user.uid), {
+            // Update User Profile with KYC data using FirestoreREST
+            await FirestoreREST.updateDoc('users', user.uid, {
                 'tutorProfile.kyc': {
                     photoUrl,
                     idProofUrl,

@@ -1,0 +1,11 @@
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+The supplied javaHome seems to be invalid. I cannot find the java executable. Tried location: C:\Program Files\Java\jdk-24\bin\java.exe
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights.
+> Get more help at https://help.gradle.org.

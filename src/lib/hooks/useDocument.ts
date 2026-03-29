@@ -1,16 +1,22 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { doc, onSnapshot, DocumentData } from 'firebase/firestore';
-import { db } from '@/lib/firebase/config';
+import { FirestoreREST } from '@/lib/firebase/nativeFirestore';
 
-export function useDocument<T = DocumentData>(
+interface UseDocumentOptions {
+    pausePolling?: boolean; // When true, polling is paused
+}
+
+export function useDocument<T = Record<string, any>>(
     collectionName: string,
-    documentId: string | null
+    documentId: string | null,
+    options: UseDocumentOptions = {}
 ) {
     const [data, setData] = useState<T | null>(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<Error | null>(null);
+
+    const { pausePolling = false } = options;
 
     useEffect(() => {
         if (!documentId) {
@@ -19,28 +25,43 @@ export function useDocument<T = DocumentData>(
             return;
         }
 
-        setLoading(true);
-        const docRef = doc(db, collectionName, documentId);
+        let isMounted = true;
 
-        const unsubscribe = onSnapshot(
-            docRef,
-            (snapshot) => {
-                if (snapshot.exists()) {
-                    setData({ id: snapshot.id, ...snapshot.data() } as T);
-                } else {
-                    setData(null);
+        const fetchDocument = async () => {
+            setLoading(true);
+            try {
+                const doc = await FirestoreREST.getDoc<T>(collectionName, documentId);
+                if (isMounted) {
+                    setData(doc ? { id: documentId, ...doc } as T : null);
+                    setError(null);
                 }
-                setLoading(false);
-                setError(null);
-            },
-            (err) => {
-                setError(err as Error);
-                setLoading(false);
+            } catch (err) {
+                if (isMounted) {
+                    setError(err as Error);
+                }
+            } finally {
+                if (isMounted) {
+                    setLoading(false);
+                }
             }
-        );
+        };
 
-        return unsubscribe;
-    }, [collectionName, documentId]);
+        // Initial fetch (always do this)
+        fetchDocument();
+
+        // Poll for updates only if not paused
+        let interval: NodeJS.Timeout | undefined;
+        if (!pausePolling) {
+            interval = setInterval(fetchDocument, 5000);
+        }
+
+        return () => {
+            isMounted = false;
+            if (interval) {
+                clearInterval(interval);
+            }
+        };
+    }, [collectionName, documentId, pausePolling]);
 
     return { data, loading, error };
 }

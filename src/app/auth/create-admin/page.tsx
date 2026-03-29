@@ -3,8 +3,8 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createUserWithEmailAndPassword } from 'firebase/auth';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { auth, db } from '@/lib/firebase/config';
+import { auth } from '@/lib/firebase/config';
+import { FirestoreREST } from '@/lib/firebase/nativeFirestore';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/Card';
 import { Button } from '@/components/Button';
 
@@ -57,12 +57,12 @@ export default function CreateAdminPage() {
             );
             const user = userCredential.user;
 
-            // Create admin user document in Firestore
-            await setDoc(doc(db, 'users', user.uid), {
+            // Create admin user document in Firestore using FirestoreREST
+            await FirestoreREST.setDoc('users', user.uid, {
                 uid: user.uid,
                 email: user.email,
                 role: 'admin',
-                createdAt: serverTimestamp(),
+                createdAt: FirestoreREST.serverTimestamp(),
                 adminProfile: {
                     firstName: formData.firstName,
                     lastName: formData.lastName,

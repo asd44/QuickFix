@@ -9,12 +9,15 @@
     "lint": "eslint"
   },
   "dependencies": {
-    "@capacitor/android": "^6.2.1",
+    "@capacitor-firebase/authentication": "^8.0.1",
+    "@capacitor/android": "^8.0.0",
     "@capacitor/app": "^8.0.0",
-    "@capacitor/cli": "^6.2.1",
-    "@capacitor/core": "^6.2.1",
-    "@capacitor/geolocation": "^6.1.1",
+    "@capacitor/cli": "^8.0.0",
+    "@capacitor/core": "^8.0.0",
+    "@capacitor/geolocation": "^8.0.0",
+    "@capacitor/local-notifications": "^8.0.0",
     "@capacitor/push-notifications": "^8.0.0",
+    "@react-google-maps/api": "^2.20.8",
     "date-fns": "^4.1.0",
     "firebase": "^12.6.0",
     "firebase-admin": "^13.6.0",
@@ -23,7 +26,8 @@
     "razorpay": "^2.9.6",
     "react": "^18.3.1",
     "react-day-picker": "^9.11.3",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "use-places-autocomplete": "^4.0.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

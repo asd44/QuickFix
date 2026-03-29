@@ -1,9 +1,10 @@
 // Firebase Web SDK Configuration (Client-side)
 import { initializeApp, getApps, FirebaseApp } from 'firebase/app';
-import { getAuth, Auth } from 'firebase/auth';
+import { initializeAuth, indexedDBLocalPersistence, getAuth, Auth } from 'firebase/auth';
 import { getFirestore, Firestore } from 'firebase/firestore';
 import { getStorage, FirebaseStorage } from 'firebase/storage';
 import { getMessaging, Messaging } from 'firebase/messaging';
+import { Capacitor } from '@capacitor/core';
 
 const firebaseConfig = {
     apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
@@ -24,7 +25,16 @@ let messaging: Messaging | undefined;
 
 if (!getApps().length) {
     app = initializeApp(firebaseConfig);
-    auth = getAuth(app);
+
+    // Use indexedDBLocalPersistence for better persistence on mobile web/hybrid
+    if (typeof window !== 'undefined' && Capacitor.isNativePlatform()) {
+        auth = initializeAuth(app, {
+            persistence: indexedDBLocalPersistence
+        });
+    } else {
+        auth = getAuth(app);
+    }
+
     db = getFirestore(app);
     storage = getStorage(app);
 
